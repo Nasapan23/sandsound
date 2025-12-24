@@ -215,7 +215,12 @@ class PlaylistTableRow(ctk.CTkFrame):
 
 
 class PlaylistTable(ctk.CTkScrollableFrame):
-    """Scrollable table displaying playlist videos."""
+    """Scrollable table displaying playlist videos with lazy loading."""
+    
+    # Batch size for progressive rendering
+    INITIAL_BATCH_SIZE = 20
+    SUBSEQUENT_BATCH_SIZE = 20
+    BATCH_DELAY_MS = 10
     
     def __init__(
         self,
@@ -234,6 +239,13 @@ class PlaylistTable(ctk.CTkScrollableFrame):
         self._videos = videos
         self._rows: Dict[str, PlaylistTableRow] = {}
         self._on_selection_change = on_selection_change
+        self._selection_state: Dict[str, bool] = {}  # Track selection even for unrendered rows
+        self._render_index = 0
+        self._is_rendering = False
+        
+        # Initialize selection state (default: select if not downloaded)
+        for video in videos:
+            self._selection_state[video.video_id] = not video.is_downloaded
         
         # Header row
         header = ctk.CTkFrame(self, fg_color=Colors.BG_CARD_HOVER, height=40)
@@ -275,8 +287,23 @@ class PlaylistTable(ctk.CTkScrollableFrame):
             anchor="e"
         ).pack(side="right", padx=(0, 12))
         
-        # Create rows for each video
-        for i, video in enumerate(videos):
+        # Start progressive rendering
+        self._start_progressive_render()
+    
+    def _start_progressive_render(self) -> None:
+        """Start rendering rows progressively in batches."""
+        if self._is_rendering:
+            return
+        self._is_rendering = True
+        self._render_index = 0
+        self._render_next_batch(self.INITIAL_BATCH_SIZE)
+    
+    def _render_next_batch(self, batch_size: int) -> None:
+        """Render the next batch of rows."""
+        end_index = min(self._render_index + batch_size, len(self._videos))
+        
+        for i in range(self._render_index, end_index):
+            video = self._videos[i]
             row = PlaylistTableRow(
                 self,
                 index=i,
@@ -285,29 +312,54 @@ class PlaylistTable(ctk.CTkScrollableFrame):
             )
             row.pack(fill="x", pady=1)
             self._rows[video.video_id] = row
+            
+            # Apply stored selection state
+            if video.video_id in self._selection_state:
+                row.set_selected(self._selection_state[video.video_id])
+        
+        self._render_index = end_index
+        
+        # Schedule next batch if more rows to render
+        if self._render_index < len(self._videos):
+            self.after(self.BATCH_DELAY_MS, 
+                       lambda: self._render_next_batch(self.SUBSEQUENT_BATCH_SIZE))
+        else:
+            self._is_rendering = False
     
     def _on_row_toggle(self, video_id: str, selected: bool) -> None:
         """Handle row selection toggle."""
+        # Update selection state
+        self._selection_state[video_id] = selected
         if self._on_selection_change:
             self._on_selection_change(self.get_selected_count())
     
     def get_selected_count(self) -> int:
         """Get count of selected videos."""
-        return sum(1 for row in self._rows.values() if row.is_selected())
+        # Use selection state to include unrendered rows
+        return sum(1 for selected in self._selection_state.values() if selected)
     
     def get_selected_ids(self) -> List[str]:
         """Get list of selected video IDs."""
-        return [vid for vid, row in self._rows.items() if row.is_selected()]
+        # Use selection state to include unrendered rows
+        return [vid for vid, selected in self._selection_state.items() if selected]
     
     def select_all(self) -> None:
         """Select all videos."""
+        # Update selection state for all
+        for video in self._videos:
+            self._selection_state[video.video_id] = True
+        # Update rendered rows
         for row in self._rows.values():
             row.set_selected(True)
         if self._on_selection_change:
-            self._on_selection_change(len(self._rows))
+            self._on_selection_change(len(self._videos))
     
     def deselect_all(self) -> None:
         """Deselect all videos."""
+        # Update selection state for all
+        for video in self._videos:
+            self._selection_state[video.video_id] = False
+        # Update rendered rows
         for row in self._rows.values():
             row.set_selected(False)
         if self._on_selection_change:
@@ -316,9 +368,12 @@ class PlaylistTable(ctk.CTkScrollableFrame):
     def select_new_only(self) -> None:
         """Select only videos that haven't been downloaded."""
         for video in self._videos:
+            selected = not video.is_downloaded
+            self._selection_state[video.video_id] = selected
+            # Update rendered row if it exists
             row = self._rows.get(video.video_id)
             if row:
-                row.set_selected(not video.is_downloaded)
+                row.set_selected(selected)
         if self._on_selection_change:
             self._on_selection_change(self.get_selected_count())
     

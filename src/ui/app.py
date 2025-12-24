@@ -8,6 +8,7 @@ from typing import Optional, List
 
 from ..config import Config
 from ..downloader import Downloader, DownloadProgress, DownloadStatus, VideoInfo
+from ..download_manager import DownloadManager, DownloadTask, AggregateProgress, TaskStatus
 from ..history import DownloadHistory
 from .components import UrlInput, FormatSelector, ProgressCard, Colors
 from .playlist_view import PlaylistViewDialog, PlaylistVideo, VideoStatus
@@ -27,10 +28,12 @@ class SandSoundApp(ctk.CTk):
             ffmpeg_location=config.get_ffmpeg_location(),
         )
         self._history = DownloadHistory()
+        self._download_manager: Optional[DownloadManager] = None
         self._download_thread: Optional[threading.Thread] = None
         self._is_downloading = False
         self._current_video_info: Optional[VideoInfo] = None
         self._playlist_dialog: Optional[PlaylistViewDialog] = None
+        self._entries_map: dict = {}  # For tracking entries during concurrent download
 
         self._setup_window()
         self._create_widgets()
@@ -304,7 +307,7 @@ class SandSoundApp(ctk.CTk):
         )
 
     def _start_playlist_download(self, video_ids: List[str], compare_download: bool) -> None:
-        """Start downloading selected playlist videos."""
+        """Start downloading selected playlist videos concurrently."""
         if self._is_downloading or not self._current_video_info:
             return
         
@@ -328,86 +331,91 @@ class SandSoundApp(ctk.CTk):
         format_type = self._format_selector.get_format()
         quality = self._format_selector.get_quality()
         
-        # Start download thread
-        self._download_thread = threading.Thread(
-            target=self._playlist_download_worker,
-            args=(info, video_ids, format_type, quality),
-            daemon=True
-        )
-        self._download_thread.start()
-
-    def _playlist_download_worker(
-        self,
-        info: VideoInfo,
-        video_ids: List[str],
-        format_type: str,
-        quality: str
-    ) -> None:
-        """Download playlist videos one by one."""
-        entries_map = {}
+        # Build entries map for history tracking
+        self._entries_map = {}
         if info.entries:
-            entries_map = {e.video_id: e for e in info.entries}
+            self._entries_map = {e.video_id: e for e in info.entries}
         
-        for i, video_id in enumerate(video_ids):
-            entry = entries_map.get(video_id)
-            if not entry:
-                continue
-            
-            # Update dialog status
-            if self._playlist_dialog:
-                self.after(0, lambda vid=video_id: self._playlist_dialog.update_video_status(
-                    vid, VideoStatus.DOWNLOADING, 0
-                ))
-            
-            # Progress callback for this video
-            def make_progress_callback(vid: str):
-                def callback(progress: DownloadProgress) -> None:
-                    if self._playlist_dialog:
-                        if progress.status == DownloadStatus.DOWNLOADING:
-                            self.after(0, lambda: self._playlist_dialog.update_video_progress(
-                                vid, progress.progress
-                            ))
-                        elif progress.status == DownloadStatus.PROCESSING:
-                            self.after(0, lambda: self._playlist_dialog.update_video_status(
-                                vid, VideoStatus.PROCESSING, progress.progress
-                            ))
-                    
-                    # Also update main progress card
-                    self.after(0, lambda: self._update_progress(progress))
-                return callback
-            
-            # Download the video
-            success = self._downloader.download(
-                url=entry.url or f"https://www.youtube.com/watch?v={video_id}",
-                format_type=format_type,
-                quality=quality,
-                progress_callback=make_progress_callback(video_id)
-            )
-            
-            # Update status
-            if success:
-                if self._playlist_dialog:
-                    self.after(0, lambda vid=video_id: self._playlist_dialog.update_video_status(
-                        vid, VideoStatus.COMPLETED, 100
-                    ))
-                # Record in history
-                self._history.add_video_download(
-                    video_id=video_id,
+        # Create download tasks
+        tasks = []
+        for video_id in video_ids:
+            entry = self._entries_map.get(video_id)
+            if entry:
+                tasks.append(DownloadTask(
+                    task_id=video_id,
+                    url=entry.url or f"https://www.youtube.com/watch?v={video_id}",
                     title=entry.title,
                     format_type=format_type,
                     quality=quality,
+                ))
+        
+        # Create download manager with callbacks
+        self._download_manager = DownloadManager(
+            downloader=self._downloader,
+            max_workers=4,  # Download 4 songs simultaneously
+            on_task_update=lambda t: self.after(0, lambda: self._on_task_update(t, info)),
+            on_aggregate_update=lambda a: self.after(0, lambda: self._on_aggregate_update(a)),
+            on_batch_complete=lambda: self.after(0, self._playlist_download_complete),
+        )
+        
+        # Submit all tasks
+        self._download_manager.submit_tasks(tasks)
+    
+    def _on_task_update(self, task: DownloadTask, info: VideoInfo) -> None:
+        """Handle individual task status updates."""
+        if not self._playlist_dialog:
+            return
+        
+        # Map task status to video status
+        status_map = {
+            TaskStatus.QUEUED: VideoStatus.PENDING,
+            TaskStatus.ACTIVE: VideoStatus.DOWNLOADING,
+            TaskStatus.COMPLETED: VideoStatus.COMPLETED,
+            TaskStatus.FAILED: VideoStatus.FAILED,
+            TaskStatus.CANCELLED: VideoStatus.FAILED,
+        }
+        
+        video_status = status_map.get(task.status, VideoStatus.PENDING)
+        self._playlist_dialog.update_video_status(
+            task.task_id, video_status, task.progress
+        )
+        
+        # Record in history when completed
+        if task.status == TaskStatus.COMPLETED:
+            entry = self._entries_map.get(task.task_id)
+            if entry:
+                self._history.add_video_download(
+                    video_id=task.task_id,
+                    title=entry.title,
+                    format_type=task.format_type,
+                    quality=task.quality,
                     playlist_id=info.playlist_id,
                     playlist_url=info.url,
                     playlist_title=info.title
                 )
+    
+    def _on_aggregate_update(self, aggregate: AggregateProgress) -> None:
+        """Handle aggregate progress updates for main progress card."""
+        # Build status text showing concurrent download info
+        if aggregate.active_tasks > 0:
+            if aggregate.active_tasks == 1:
+                title = aggregate.active_titles[0] if aggregate.active_titles else "Downloading..."
             else:
-                if self._playlist_dialog:
-                    self.after(0, lambda vid=video_id: self._playlist_dialog.update_video_status(
-                        vid, VideoStatus.FAILED, 0
-                    ))
-        
-        # Done
-        self.after(0, self._playlist_download_complete)
+                title = f"Downloading {aggregate.active_tasks} songs..."
+            
+            status = f"{aggregate.completed_tasks}/{aggregate.total_tasks} completed"
+            
+            self._progress_card.update_progress(
+                title=title,
+                status=status,
+                progress=aggregate.overall_progress,
+                speed=aggregate.total_speed,
+                eta="",
+            )
+        elif aggregate.completed_tasks == aggregate.total_tasks:
+            self._progress_card.set_completed(
+                f"Completed {aggregate.completed_tasks} downloads"
+            )
 
     def _playlist_download_complete(self) -> None:
         """Reset UI after playlist download completes."""
