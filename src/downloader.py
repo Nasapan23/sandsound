@@ -5,9 +5,11 @@ Handles video/audio downloading with cookie authentication.
 
 import os
 import re
+import sys
 import threading
 from dataclasses import dataclass
 from enum import Enum
+from io import StringIO
 from pathlib import Path
 from typing import Callable, List, Optional
 
@@ -60,10 +62,39 @@ class VideoInfo:
     entries: Optional[List[PlaylistItem]] = None
 
 
+class _QuietLogger:
+    """Silent logger for yt-dlp to suppress console output."""
+    
+    def debug(self, msg: str) -> None:
+        pass
+    
+    def info(self, msg: str) -> None:
+        pass
+    
+    def warning(self, msg: str) -> None:
+        pass
+    
+    def error(self, msg: str) -> None:
+        pass
+
+
+class _SuppressStderr:
+    """Context manager to suppress stderr output from yt-dlp."""
+    
+    def __enter__(self):
+        self._original_stderr = sys.stderr
+        sys.stderr = StringIO()
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        sys.stderr = self._original_stderr
+        return False
+
+
 class Downloader:
     """YouTube downloader service using yt-dlp."""
 
-    # Format templates for yt-dlp
+    # Format templates for yt-dlp with fallbacks
     AUDIO_FORMATS = {
         "mp3": "bestaudio/best",
         "m4a": "bestaudio[ext=m4a]/bestaudio/best",
@@ -73,8 +104,8 @@ class Downloader:
     }
 
     VIDEO_FORMATS = {
-        "mp4": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
-        "webm": "bestvideo[ext=webm]+bestaudio[ext=webm]/best[ext=webm]/best",
+        "mp4": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo[ext=mp4]+bestaudio/bestvideo+bestaudio/best[ext=mp4]/best",
+        "webm": "bestvideo[ext=webm]+bestaudio[ext=webm]/bestvideo[ext=webm]+bestaudio/bestvideo+bestaudio/best[ext=webm]/best",
         "mkv": "bestvideo+bestaudio/best",
     }
 
@@ -135,7 +166,14 @@ class Downloader:
             "outtmpl": str(self._download_dir / "%(title)s.%(ext)s"),
             "quiet": True,
             "no_warnings": True,
+            "noprogress": True,
+            "ignoreerrors": False,  # We handle errors ourselves
             "extract_flat": False,
+            "no_check_certificates": True,
+            # Suppress console output
+            "logger": _QuietLogger(),
+            # Use more permissive format selection
+            "format_sort": ["res", "ext:mp4:m4a:mp3:webm", "acodec:aac:mp3"],
         }
 
         if self._cookie_file and Path(self._cookie_file).is_file():
@@ -145,6 +183,10 @@ class Downloader:
             opts["ffmpeg_location"] = self._ffmpeg_location
 
         return opts
+    
+    def _suppress_stderr(self):
+        """Context manager to suppress stderr output."""
+        return _SuppressStderr()
 
     def get_video_info(self, url: str) -> Optional[VideoInfo]:
         """
@@ -160,43 +202,43 @@ class Downloader:
         opts["extract_flat"] = "in_playlist"
 
         try:
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(url, download=False)
+            with self._suppress_stderr():
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
 
-                if info is None:
-                    return None
+                    if info is None:
+                        return None
 
-                is_playlist = info.get("_type") == "playlist"
-                raw_entries = info.get("entries", [])
-                
-                # Build playlist entries with video info
-                entries = None
-                if is_playlist and raw_entries:
-                    entries = []
-                    for entry in raw_entries:
-                        if entry:  # Skip None entries
-                            video_id = entry.get("id") or entry.get("url", "").split("=")[-1]
-                            entries.append(PlaylistItem(
-                                video_id=video_id,
-                                title=entry.get("title", "Unknown"),
-                                duration=entry.get("duration"),
-                                thumbnail=entry.get("thumbnail"),
-                                url=f"https://www.youtube.com/watch?v={video_id}"
-                            ))
+                    is_playlist = info.get("_type") == "playlist"
+                    raw_entries = info.get("entries", [])
+                    
+                    # Build playlist entries with video info
+                    entries = None
+                    if is_playlist and raw_entries:
+                        entries = []
+                        for entry in raw_entries:
+                            if entry:  # Skip None entries
+                                video_id = entry.get("id") or entry.get("url", "").split("=")[-1]
+                                entries.append(PlaylistItem(
+                                    video_id=video_id,
+                                    title=entry.get("title", "Unknown"),
+                                    duration=entry.get("duration"),
+                                    thumbnail=entry.get("thumbnail"),
+                                    url=f"https://www.youtube.com/watch?v={video_id}"
+                                ))
 
-                return VideoInfo(
-                    url=url,
-                    title=info.get("title", "Unknown"),
-                    duration=info.get("duration"),
-                    thumbnail=info.get("thumbnail"),
-                    is_playlist=is_playlist,
-                    playlist_count=len(entries) if entries else 1,
-                    uploader=info.get("uploader"),
-                    playlist_id=info.get("id") if is_playlist else None,
-                    entries=entries
-                )
-        except Exception as e:
-            print(f"Failed to extract info: {e}")
+                    return VideoInfo(
+                        url=url,
+                        title=info.get("title", "Unknown"),
+                        duration=info.get("duration"),
+                        thumbnail=info.get("thumbnail"),
+                        is_playlist=is_playlist,
+                        playlist_count=len(entries) if entries else 1,
+                        uploader=info.get("uploader"),
+                        playlist_id=info.get("id") if is_playlist else None,
+                        entries=entries
+                    )
+        except Exception:
             return None
 
     def download(
@@ -236,7 +278,13 @@ class Downloader:
             quality_val = self.QUALITY_MAP.get(quality)
 
             if quality_val:
-                opts["format"] = f"bestvideo[height<={quality_val}]+bestaudio/best[height<={quality_val}]"
+                # Try specific quality first, then fallback to lower qualities and finally best
+                opts["format"] = (
+                    f"bestvideo[height<={quality_val}]+bestaudio/"
+                    f"bestvideo[height<={quality_val}]/"
+                    f"best[height<={quality_val}]/"
+                    f"bestvideo+bestaudio/best"
+                )
             else:
                 opts["format"] = base_format
 
@@ -295,38 +343,76 @@ class Downloader:
         opts["progress_hooks"] = [progress_hook]
 
         try:
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                # Get title first
-                info = ydl.extract_info(url, download=False)
-                if info:
-                    current_title[0] = info.get("title", "Unknown")
+            with self._suppress_stderr():
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    # Get title first
+                    info = ydl.extract_info(url, download=False)
+                    if info:
+                        current_title[0] = info.get("title", "Unknown")
 
-                if progress_callback:
-                    progress_callback(DownloadProgress(
-                        status=DownloadStatus.PENDING,
-                        title=current_title[0],
-                        progress=0.0,
-                        speed="",
-                        eta="",
-                        filename="",
-                    ))
+                    if progress_callback:
+                        progress_callback(DownloadProgress(
+                            status=DownloadStatus.PENDING,
+                            title=current_title[0],
+                            progress=0.0,
+                            speed="",
+                            eta="",
+                            filename="",
+                        ))
 
-                ydl.download([url])
+                    ydl.download([url])
 
-                if progress_callback:
-                    progress_callback(DownloadProgress(
-                        status=DownloadStatus.COMPLETED,
-                        title=current_title[0],
-                        progress=100.0,
-                        speed="",
-                        eta="",
-                        filename="",
-                    ))
+                    if progress_callback:
+                        progress_callback(DownloadProgress(
+                            status=DownloadStatus.COMPLETED,
+                            title=current_title[0],
+                            progress=100.0,
+                            speed="",
+                            eta="",
+                            filename="",
+                        ))
 
-                return True
+                    return True
 
         except Exception as e:
             error_msg = str(e)
+            # If format error, try with a simpler fallback format
+            if "Requested format is not available" in error_msg or "format is not available" in error_msg.lower():
+                try:
+                    # Retry with most basic format that should always work
+                    fallback_opts = self._get_base_options()
+                    if is_audio:
+                        # Try "best" which works for any video
+                        fallback_opts["format"] = "best"
+                        fallback_opts["postprocessors"] = [{
+                            "key": "FFmpegExtractAudio",
+                            "preferredcodec": format_type,
+                            "preferredquality": self.AUDIO_QUALITY_MAP.get(quality, "0"),
+                        }]
+                    else:
+                        fallback_opts["format"] = "best"
+                        if format_type in ["mp4", "mkv"]:
+                            fallback_opts["merge_output_format"] = format_type
+                    
+                    fallback_opts["progress_hooks"] = [progress_hook]
+                    
+                    with self._suppress_stderr():
+                        with yt_dlp.YoutubeDL(fallback_opts) as ydl:
+                            ydl.download([url])
+                            
+                            if progress_callback:
+                                progress_callback(DownloadProgress(
+                                    status=DownloadStatus.COMPLETED,
+                                    title=current_title[0],
+                                    progress=100.0,
+                                    speed="",
+                                    eta="",
+                                    filename="",
+                                ))
+                            return True
+                except Exception as fallback_error:
+                    error_msg = f"Video unavailable or requires authentication: {str(fallback_error)}"
+            
             if progress_callback:
                 progress_callback(DownloadProgress(
                     status=DownloadStatus.FAILED,

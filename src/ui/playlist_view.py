@@ -181,25 +181,41 @@ class PlaylistTableRow(ctk.CTkFrame):
     
     def set_status(self, status: VideoStatus, progress: float = 0.0) -> None:
         """Update the status display."""
+        # Check if widget is still valid (not destroyed)
+        try:
+            if not self.winfo_exists():
+                return
+        except Exception:
+            return
+        
         self._video.status = status
         self._video.progress = progress
         
-        if status == VideoStatus.DOWNLOADING:
-            self._status_label.pack_forget()
-            self._progress_bar.pack(side="right")
-            self._progress_bar.set(progress / 100.0)
-        else:
-            self._progress_bar.pack_forget()
-            self._status_label.pack(side="right")
-            self._status_label.configure(
-                text=self._get_status_text(),
-                text_color=self._get_status_color()
-            )
+        try:
+            if status == VideoStatus.DOWNLOADING:
+                self._status_label.pack_forget()
+                self._progress_bar.pack(side="right")
+                self._progress_bar.set(progress / 100.0)
+            else:
+                self._progress_bar.pack_forget()
+                self._status_label.pack(side="right")
+                self._status_label.configure(
+                    text=self._get_status_text(),
+                    text_color=self._get_status_color()
+                )
+        except Exception:
+            # Widget was destroyed during operation
+            pass
     
     def update_progress(self, progress: float) -> None:
         """Update download progress."""
-        self._video.progress = progress
-        self._progress_bar.set(progress / 100.0)
+        try:
+            if not self.winfo_exists():
+                return
+            self._video.progress = progress
+            self._progress_bar.set(progress / 100.0)
+        except Exception:
+            pass
     
     def is_selected(self) -> bool:
         """Check if this video is selected for download."""
@@ -384,13 +400,23 @@ class PlaylistTable(ctk.CTkScrollableFrame):
         progress: float = 0.0
     ) -> None:
         """Update status for a specific video."""
-        if video_id in self._rows:
-            self._rows[video_id].set_status(status, progress)
+        try:
+            if not self.winfo_exists():
+                return
+            if video_id in self._rows:
+                self._rows[video_id].set_status(status, progress)
+        except Exception:
+            pass
     
     def update_video_progress(self, video_id: str, progress: float) -> None:
         """Update download progress for a specific video."""
-        if video_id in self._rows:
-            self._rows[video_id].update_progress(progress)
+        try:
+            if not self.winfo_exists():
+                return
+            if video_id in self._rows:
+                self._rows[video_id].update_progress(progress)
+        except Exception:
+            pass
 
 
 class PlaylistViewDialog(ctk.CTkToplevel):
