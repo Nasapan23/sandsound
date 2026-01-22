@@ -34,6 +34,7 @@ class DownloadTask:
     speed: str = ""
     eta: str = ""
     error: Optional[str] = None
+    playlist_title: Optional[str] = None
 
 
 @dataclass
@@ -157,6 +158,7 @@ class DownloadManager:
                 format_type=task.format_type,
                 quality=task.quality,
                 progress_callback=progress_callback,
+                playlist_title=task.playlist_title,
             )
             
             with self._lock:

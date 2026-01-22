@@ -226,3 +226,34 @@ class DownloadHistory:
         self._playlists = {}
         self._single_videos = {}
         self._save()
+    
+    def get_all_playlists(self) -> List[PlaylistRecord]:
+        """
+        Get all playlists in history.
+        
+        Returns:
+            List of all PlaylistRecord objects, sorted by last_downloaded (newest first)
+        """
+        playlists = list(self._playlists.values())
+        # Sort by last_downloaded, newest first
+        playlists.sort(key=lambda p: p.last_downloaded, reverse=True)
+        return playlists
+    
+    def check_for_new_videos(
+        self,
+        playlist_id: str,
+        current_video_ids: List[str]
+    ) -> tuple[List[str], int]:
+        """
+        Check for new videos in a playlist.
+        
+        Args:
+            playlist_id: Playlist ID to check
+            current_video_ids: List of current video IDs in the playlist
+            
+        Returns:
+            Tuple of (new_video_ids, total_new_count)
+        """
+        downloaded = self.get_downloaded_video_ids(playlist_id)
+        new_videos = [vid for vid in current_video_ids if vid not in downloaded]
+        return new_videos, len(new_videos)

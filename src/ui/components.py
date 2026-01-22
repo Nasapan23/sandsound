@@ -199,6 +199,12 @@ class UrlInput(ctk.CTkFrame):
     def get_url(self) -> str:
         """Get current URL text."""
         return self._entry.get().strip()
+    
+    def set_url(self, url: str) -> None:
+        """Set the URL in the entry."""
+        self._entry.delete(0, "end")
+        self._entry.insert(0, url)
+        self._validate()
 
     def clear(self) -> None:
         """Clear the input field."""

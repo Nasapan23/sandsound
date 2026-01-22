@@ -1,0 +1,149 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'  # Triggers on version tags like v1.0.0
+  workflow_dispatch:  # Allows manual triggering
+    inputs:
+      version:
+        description: 'Version number (e.g., 1.0.0)'
+        required: true
+        type: string
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+        include:
+          - os: windows-latest
+            exe_name: SandSound.exe
+            artifact_name: sandsound-windows
+            artifact_path: dist/SandSound.exe
+          - os: ubuntu-latest
+            exe_name: sandsound
+            artifact_name: sandsound-linux
+            artifact_path: dist/sandsound
+          - os: macos-latest
+            exe_name: SandSound
+            artifact_name: sandsound-macos
+            artifact_path: dist/SandSound.app
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install system dependencies (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Install system dependencies (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew install ffmpeg
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build executable
+        run: |
+          if [ "${{ matrix.os }}" == "macos-latest" ]; then
+            pyinstaller --clean --noconfirm --target-arch universal2 sandsound.spec || pyinstaller --clean --noconfirm sandsound.spec
+          else
+            pyinstaller --clean --noconfirm sandsound.spec
+          fi
+        env:
+          OS_NAME: ${{ matrix.os }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_path }}
+          retention-days: 30
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            VERSION=${GITHUB_REF#refs/tags/v}
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release-assets
+          VERSION="${{ steps.version.outputs.version }}"
+          # Windows
+          if [ -f "artifacts/sandsound-windows/SandSound.exe" ]; then
+            cp artifacts/sandsound-windows/SandSound.exe release-assets/SandSound-Windows-${VERSION}.exe
+          fi
+          # Linux
+          if [ -f "artifacts/sandsound-linux/sandsound" ]; then
+            cp artifacts/sandsound-linux/sandsound release-assets/SandSound-Linux-${VERSION}
+            chmod +x release-assets/SandSound-Linux-${VERSION}
+          fi
+          # macOS - handle .app bundle
+          if [ -d "artifacts/sandsound-macos/SandSound.app" ]; then
+            # Create a zip of the app bundle for easier distribution
+            cd artifacts/sandsound-macos
+            zip -r ../../release-assets/SandSound-macOS-${VERSION}.zip SandSound.app
+            cd ../..
+          elif [ -f "artifacts/sandsound-macos/SandSound" ]; then
+            cp artifacts/sandsound-macos/SandSound release-assets/SandSound-macOS-${VERSION}
+            chmod +x release-assets/SandSound-macOS-${VERSION}
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: Release v${{ steps.version.outputs.version }}
+          body: |
+            ## SandSound v${{ steps.version.outputs.version }}
+            
+            ### Downloads
+            - **Windows**: SandSound-Windows-${{ steps.version.outputs.version }}.exe
+            - **Linux**: SandSound-Linux-${{ steps.version.outputs.version }}
+            - **macOS**: SandSound-macOS-${{ steps.version.outputs.version }}.zip (or .app bundle)
+            
+            ### Installation
+            - **Windows**: Download the .exe file and run it
+            - **Linux**: Download the binary, make it executable (`chmod +x SandSound-Linux-${{ steps.version.outputs.version }}`), and run it
+            - **macOS**: Download the .zip file, extract it, and run the SandSound.app bundle
+            
+            **Note**: FFmpeg is required for audio conversion. Make sure it's installed on your system or configured in the app settings.
+          files: release-assets/*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

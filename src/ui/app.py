@@ -12,6 +12,7 @@ from ..download_manager import DownloadManager, DownloadTask, AggregateProgress,
 from ..history import DownloadHistory
 from .components import UrlInput, FormatSelector, ProgressCard, Colors
 from .playlist_view import PlaylistViewDialog, PlaylistVideo, VideoStatus
+from .playlist_history import PlaylistHistoryDialog
 from .settings import SettingsDialog
 
 
@@ -107,9 +108,26 @@ class SandSoundApp(ctk.CTk):
         )
         subtitle.pack(side="left", padx=(10, 0), pady=(12, 0))
 
+        # Right side buttons
+        button_frame = ctk.CTkFrame(header, fg_color="transparent")
+        button_frame.pack(side="right")
+        
+        # History button
+        history_btn = ctk.CTkButton(
+            button_frame,
+            text="History",
+            width=90,
+            height=35,
+            corner_radius=8,
+            fg_color="transparent",
+            border_width=2,
+            command=self._open_history,
+        )
+        history_btn.pack(side="left", padx=(0, 8))
+        
         # Settings button
         settings_btn = ctk.CTkButton(
-            header,
+            button_frame,
             text="Settings",
             width=100,
             height=35,
@@ -118,7 +136,7 @@ class SandSoundApp(ctk.CTk):
             border_width=2,
             command=self._open_settings,
         )
-        settings_btn.pack(side="right")
+        settings_btn.pack(side="left")
 
     def _create_url_section(self) -> None:
         """Create URL input section."""
@@ -347,6 +365,7 @@ class SandSoundApp(ctk.CTk):
                     title=entry.title,
                     format_type=format_type,
                     quality=quality,
+                    playlist_title=info.title if info.is_playlist else None,
                 ))
         
         # Create download manager with callbacks
@@ -424,6 +443,24 @@ class SandSoundApp(ctk.CTk):
         if self._playlist_dialog:
             self._playlist_dialog.set_downloading(False)
 
+    def _open_history(self) -> None:
+        """Open playlist history dialog."""
+        PlaylistHistoryDialog(
+            self,
+            history=self._history,
+            downloader=self._downloader,
+            on_open_playlist=self._open_playlist_from_history
+        )
+    
+    def _open_playlist_from_history(self, playlist_url: str) -> None:
+        """Open a playlist from history in the URL input."""
+        self._url_input.set_url(playlist_url)
+        # Trigger validation to fetch playlist info
+        self._on_url_validate(playlist_url)
+        # Open playlist view if it's a playlist
+        if self._current_video_info and self._current_video_info.is_playlist:
+            self._open_playlist_view()
+    
     def _open_settings(self) -> None:
         """Open settings dialog."""
         SettingsDialog(
