@@ -60,13 +60,23 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Build executable
+      - name: Build executable (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: cmd
         run: |
-          if [ "${{ matrix.os }}" == "macos-latest" ]; then
-            pyinstaller --clean --noconfirm --target-arch universal2 sandsound.spec || pyinstaller --clean --noconfirm sandsound.spec
-          else
-            pyinstaller --clean --noconfirm sandsound.spec
-          fi
+          pyinstaller --clean --noconfirm sandsound.spec
+
+      - name: Build executable (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          pyinstaller --clean --noconfirm sandsound.spec
+
+      - name: Build executable (macOS)
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          pyinstaller --clean --noconfirm --target-arch universal2 sandsound.spec || pyinstaller --clean --noconfirm sandsound.spec
         env:
           OS_NAME: ${{ matrix.os }}
 
