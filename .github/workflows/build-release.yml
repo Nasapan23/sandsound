@@ -2,6 +2,8 @@ name: Build and Release
 
 on:
   push:
+    branches:
+      - main  # Build on every push to main
     tags:
       - 'v*.*.*'  # Triggers on version tags like v1.0.0
   workflow_dispatch:  # Allows manual triggering
@@ -147,3 +149,68 @@ jobs:
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Build-only job for main branch (artifacts only, no release)
+  build-main:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/')
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine version
+        id: version
+        run: |
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          TAG_VERSION=${LATEST_TAG#v}
+          COMMITS_SINCE_TAG=$(git rev-list --count ${LATEST_TAG}..HEAD 2>/dev/null || echo "0")
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          
+          if [ "$COMMITS_SINCE_TAG" -gt "0" ]; then
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$TAG_VERSION"
+            PATCH=$((PATCH + COMMITS_SINCE_TAG))
+            VERSION="${MAJOR}.${MINOR}.${PATCH}-dev.${SHORT_SHA}"
+          else
+            VERSION="${TAG_VERSION}-dev.${SHORT_SHA}"
+          fi
+          
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare build artifacts
+        run: |
+          mkdir -p build-assets
+          VERSION="${{ steps.version.outputs.version }}"
+          # Windows
+          if [ -f "artifacts/sandsound-windows/SandSound.exe" ]; then
+            cp artifacts/sandsound-windows/SandSound.exe build-assets/SandSound-Windows-${VERSION}.exe
+          fi
+          # Linux
+          if [ -f "artifacts/sandsound-linux/sandsound" ]; then
+            cp artifacts/sandsound-linux/sandsound build-assets/SandSound-Linux-${VERSION}
+            chmod +x build-assets/SandSound-Linux-${VERSION}
+          fi
+          # macOS
+          if [ -d "artifacts/sandsound-macos/SandSound.app" ]; then
+            cd artifacts/sandsound-macos
+            zip -r ../../build-assets/SandSound-macOS-${VERSION}.zip SandSound.app
+            cd ../..
+          elif [ -f "artifacts/sandsound-macos/SandSound" ]; then
+            cp artifacts/sandsound-macos/SandSound build-assets/SandSound-macOS-${VERSION}
+            chmod +x build-assets/SandSound-macOS-${VERSION}
+          fi
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ steps.version.outputs.version }}
+          path: build-assets/*
+          retention-days: 7
