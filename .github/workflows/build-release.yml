@@ -15,24 +15,7 @@ on:
 
 jobs:
   build:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
-        include:
-          - os: windows-latest
-            exe_name: SandSound.exe
-            artifact_name: sandsound-windows
-            artifact_path: dist/SandSound.exe
-          - os: ubuntu-latest
-            exe_name: sandsound
-            artifact_name: sandsound-linux
-            artifact_path: dist/sandsound
-          - os: macos-latest
-            exe_name: SandSound
-            artifact_name: sandsound-macos
-            artifact_path: dist/SandSound.app
+    runs-on: windows-latest
 
     steps:
       - name: Checkout code
@@ -43,48 +26,22 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install system dependencies (Linux)
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
-
-      - name: Install system dependencies (macOS)
-        if: matrix.os == 'macos-latest'
-        run: |
-          brew install ffmpeg
-
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Build executable (Windows)
-        if: matrix.os == 'windows-latest'
+      - name: Build executable
         shell: cmd
         run: |
           pyinstaller --clean --noconfirm sandsound.spec
 
-      - name: Build executable (Linux)
-        if: matrix.os == 'ubuntu-latest'
-        shell: bash
-        run: |
-          pyinstaller --clean --noconfirm sandsound.spec
-
-      - name: Build executable (macOS)
-        if: matrix.os == 'macos-latest'
-        shell: bash
-        run: |
-          pyinstaller --clean --noconfirm --target-arch universal2 sandsound.spec || pyinstaller --clean --noconfirm sandsound.spec
-        env:
-          OS_NAME: ${{ matrix.os }}
-
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}
-          path: ${{ matrix.artifact_path }}
+          name: sandsound-windows
+          path: dist/SandSound.exe
           retention-days: 30
 
   release:
@@ -115,24 +72,8 @@ jobs:
         run: |
           mkdir -p release-assets
           VERSION="${{ steps.version.outputs.version }}"
-          # Windows
           if [ -f "artifacts/sandsound-windows/SandSound.exe" ]; then
             cp artifacts/sandsound-windows/SandSound.exe release-assets/SandSound-Windows-${VERSION}.exe
-          fi
-          # Linux
-          if [ -f "artifacts/sandsound-linux/sandsound" ]; then
-            cp artifacts/sandsound-linux/sandsound release-assets/SandSound-Linux-${VERSION}
-            chmod +x release-assets/SandSound-Linux-${VERSION}
-          fi
-          # macOS - handle .app bundle
-          if [ -d "artifacts/sandsound-macos/SandSound.app" ]; then
-            # Create a zip of the app bundle for easier distribution
-            cd artifacts/sandsound-macos
-            zip -r ../../release-assets/SandSound-macOS-${VERSION}.zip SandSound.app
-            cd ../..
-          elif [ -f "artifacts/sandsound-macos/SandSound" ]; then
-            cp artifacts/sandsound-macos/SandSound release-assets/SandSound-macOS-${VERSION}
-            chmod +x release-assets/SandSound-macOS-${VERSION}
           fi
 
       - name: Create Release
@@ -145,13 +86,9 @@ jobs:
             
             ### Downloads
             - **Windows**: SandSound-Windows-${{ steps.version.outputs.version }}.exe
-            - **Linux**: SandSound-Linux-${{ steps.version.outputs.version }}
-            - **macOS**: SandSound-macOS-${{ steps.version.outputs.version }}.zip (or .app bundle)
             
             ### Installation
             - **Windows**: Download the .exe file and run it
-            - **Linux**: Download the binary, make it executable (`chmod +x SandSound-Linux-${{ steps.version.outputs.version }}`), and run it
-            - **macOS**: Download the .zip file, extract it, and run the SandSound.app bundle
             
             **Note**: FFmpeg is required for audio conversion. Make sure it's installed on your system or configured in the app settings.
           files: release-assets/*
@@ -199,23 +136,8 @@ jobs:
         run: |
           mkdir -p build-assets
           VERSION="${{ steps.version.outputs.version }}"
-          # Windows
           if [ -f "artifacts/sandsound-windows/SandSound.exe" ]; then
             cp artifacts/sandsound-windows/SandSound.exe build-assets/SandSound-Windows-${VERSION}.exe
-          fi
-          # Linux
-          if [ -f "artifacts/sandsound-linux/sandsound" ]; then
-            cp artifacts/sandsound-linux/sandsound build-assets/SandSound-Linux-${VERSION}
-            chmod +x build-assets/SandSound-Linux-${VERSION}
-          fi
-          # macOS
-          if [ -d "artifacts/sandsound-macos/SandSound.app" ]; then
-            cd artifacts/sandsound-macos
-            zip -r ../../build-assets/SandSound-macOS-${VERSION}.zip SandSound.app
-            cd ../..
-          elif [ -f "artifacts/sandsound-macos/SandSound" ]; then
-            cp artifacts/sandsound-macos/SandSound build-assets/SandSound-macOS-${VERSION}
-            chmod +x build-assets/SandSound-macOS-${VERSION}
           fi
 
       - name: Upload build artifacts
