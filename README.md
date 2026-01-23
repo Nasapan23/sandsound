@@ -60,7 +60,7 @@ SandSound is a desktop application for downloading YouTube videos and audio with
 
 ### Option 1: Pre-built Executable (Windows)
 
-1. Download the latest release from the [Releases page](https://github.com/yourusername/sandsound/releases)
+1. Download the latest release from the [Releases page](https://github.com/Nasapan23/sandsound/releases)
 2. Run `SandSound-Windows-X.X.X.exe`
 3. Ensure FFmpeg is installed (see [FFmpeg Setup](#ffmpeg-setup))
 
@@ -78,7 +78,7 @@ python --version  # Should be 3.10 or higher
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/yourusername/sandsound.git
+   git clone https://github.com/Nasapan23/sandsound.git
    cd sandsound
    ```
 
@@ -174,8 +174,8 @@ All settings are stored in `~/.sandsound/` (or `%USERPROFILE%\.sandsound\` on Wi
 
 ### Getting Help
 
-- Check existing [Issues](https://github.com/yourusername/sandsound/issues)
-- Create a new [Issue](https://github.com/yourusername/sandsound/issues/new) with details
+- Check existing [Issues](https://github.com/Nasapan23/sandsound/issues)
+- Create a new [Issue](https://github.com/Nasapan23/sandsound/issues/new) with details
 - Review the [Contributing Guide](CONTRIBUTING.md) for development help
 
 ## 🗺️ Roadmap
@@ -229,8 +229,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📞 Contact & Support
 
-- **Issues**: [GitHub Issues](https://github.com/yourusername/sandsound/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/yourusername/sandsound/discussions)
+- **Issues**: [GitHub Issues](https://github.com/Nasapan23/sandsound/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/Nasapan23/sandsound/discussions)
 
 ---
 
