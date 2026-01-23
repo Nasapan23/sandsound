@@ -2,12 +2,14 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)
+![Version](https://img.shields.io/badge/version-1.0.2-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.10+-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)
 
-**A modern, open-source YouTube downloader with a beautiful interface**
+**A modern, open-source YouTube downloader for audio, music, and video downloads**
+
+Perfect for musicians, content creators, and anyone who needs a reliable YouTube downloader.
 
 [Features](#-features) • [Installation](#-installation) • [Usage](#-usage) • [Contributing](#-contributing) • [License](#-license)
 
@@ -15,9 +17,23 @@
 
 ---
 
+<div align="center">
+
+**Topics**: `youtube-downloader` • `audio` • `music` • `open-source` • `cli-tool` • `yt-dlp` • `musicians` • `youtube` • `downloader` • `mp3` • `playlist` • `python` • `desktop-app` • `gui` • `customtkinter`
+
+</div>
+
+---
+
 ## 🚀 Overview
 
-SandSound is a desktop application for downloading YouTube videos and audio with a focus on user experience, modern design, and powerful features. Built with Python and CustomTkinter, it provides a clean, intuitive interface that makes downloading content simple and enjoyable.
+SandSound is a modern, open-source desktop application for downloading YouTube videos and audio. Perfect for musicians, content creators, and anyone who needs to download YouTube content. Built with Python and CustomTkinter, it provides a clean, intuitive interface that makes downloading content simple and enjoyable.
+
+**Key Features for Musicians & Audio Enthusiasts:**
+- High-quality audio extraction (MP3, M4A, OPUS, FLAC, WAV)
+- Batch playlist downloads for entire music collections
+- Smart re-download detection to keep your library updated
+- Clean, distraction-free interface focused on the essentials
 
 ### Why SandSound?
 
@@ -47,7 +63,14 @@ SandSound is a desktop application for downloading YouTube videos and audio with
 
 ## 📸 Screenshots
 
-> **Note**: Screenshots coming soon! If you'd like to contribute screenshots, please see our [Contributing Guide](CONTRIBUTING.md).
+### Main Interface
+![Main Interface](SS_Main.png)
+
+### Playlist View
+![Playlist View](SS_Playlists.png)
+
+### Download History
+![Download History](SS_History.png)
 
 ## 📋 Requirements
 
@@ -232,11 +255,29 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **Issues**: [GitHub Issues](https://github.com/Nasapan23/sandsound/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/Nasapan23/sandsound/discussions)
 
+## 🏷️ Topics & Keywords
+
+This project is tagged with the following topics for easy discovery:
+
+**Primary Topics:**
+- `youtube-downloader` - Download videos and audio from YouTube
+- `audio` - High-quality audio extraction and conversion
+- `music` - Perfect for musicians and music enthusiasts
+- `open-source` - Free and open-source software
+- `cli-tool` - Command-line interface support (planned)
+- `yt-dlp` - Built on the powerful yt-dlp library
+- `musicians` - Designed with musicians in mind
+
+**Additional Tags:**
+- `youtube` • `downloader` • `mp3` • `playlist` • `python` • `desktop-app` • `gui` • `customtkinter` • `video-downloader` • `audio-extractor` • `batch-download` • `playlist-manager`
+
+> **Note**: To add these topics to your GitHub repository, go to the repository page → click the gear icon next to "About" → add topics in the "Topics" field.
+
 ---
 
 <div align="center">
 
-**Made with ❤️ by the SandSound community**
+**Crafted with ❤️ by the SandSound community — primary maintainer: Nisipeanu Ionut**
 
 ⭐ Star this repo if you find it useful!
 
