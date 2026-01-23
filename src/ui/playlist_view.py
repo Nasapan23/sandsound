@@ -57,7 +57,7 @@ class PlaylistTableRow(ctk.CTkFrame):
         self._on_toggle = on_toggle
         self._selected = not video.is_downloaded  # Default: select if not downloaded
         
-        # Checkbox
+        # Checkbox (defer selection to reduce initial render cost)
         self._checkbox = ctk.CTkCheckBox(
             self,
             text="",
@@ -72,8 +72,7 @@ class PlaylistTableRow(ctk.CTkFrame):
             command=self._on_check_change
         )
         self._checkbox.pack(side="left", padx=(12, 8))
-        if self._selected:
-            self._checkbox.select()
+        # Don't select immediately - will be set by set_selected if needed
         
         # Index number
         self._index_label = ctk.CTkLabel(
@@ -188,17 +187,31 @@ class PlaylistTableRow(ctk.CTkFrame):
         except Exception:
             return
         
+        # Only update if status changed (reduces redraws)
+        status_changed = self._video.status != status
         self._video.status = status
         self._video.progress = progress
         
         try:
             if status == VideoStatus.DOWNLOADING:
-                self._status_label.pack_forget()
-                self._progress_bar.pack(side="right")
+                # Only repack if not already visible (reduces layout recalculations)
+                try:
+                    if not self._progress_bar.winfo_viewable():
+                        self._status_label.pack_forget()
+                        self._progress_bar.pack(side="right")
+                except:
+                    self._status_label.pack_forget()
+                    self._progress_bar.pack(side="right")
                 self._progress_bar.set(progress / 100.0)
             else:
-                self._progress_bar.pack_forget()
-                self._status_label.pack(side="right")
+                # Only repack if status changed (reduces layout recalculations)
+                if status_changed:
+                    try:
+                        if self._progress_bar.winfo_viewable():
+                            self._progress_bar.pack_forget()
+                    except:
+                        pass
+                    self._status_label.pack(side="right")
                 self._status_label.configure(
                     text=self._get_status_text(),
                     text_color=self._get_status_color()
@@ -212,8 +225,11 @@ class PlaylistTableRow(ctk.CTkFrame):
         try:
             if not self.winfo_exists():
                 return
-            self._video.progress = progress
-            self._progress_bar.set(progress / 100.0)
+            # Only update if progress changed significantly (reduce redraws)
+            current_progress = self._video.progress
+            if abs(current_progress - progress) >= 2.0 or progress == 0.0 or progress >= 100.0:
+                self._video.progress = progress
+                self._progress_bar.set(progress / 100.0)
         except Exception:
             pass
     
@@ -233,10 +249,10 @@ class PlaylistTableRow(ctk.CTkFrame):
 class PlaylistTable(ctk.CTkScrollableFrame):
     """Scrollable table displaying playlist videos with lazy loading."""
     
-    # Batch size for progressive rendering
-    INITIAL_BATCH_SIZE = 20
-    SUBSEQUENT_BATCH_SIZE = 20
-    BATCH_DELAY_MS = 10
+    # Batch size for progressive rendering (optimized for large playlists)
+    INITIAL_BATCH_SIZE = 30  # Render first 30 quickly
+    SUBSEQUENT_BATCH_SIZE = 15  # Smaller batches for smoother rendering
+    BATCH_DELAY_MS = 50  # Increased delay to prevent UI blocking
     
     def __init__(
         self,
@@ -260,8 +276,11 @@ class PlaylistTable(ctk.CTkScrollableFrame):
         self._is_rendering = False
         
         # Initialize selection state (default: select if not downloaded)
-        for video in videos:
-            self._selection_state[video.video_id] = not video.is_downloaded
+        # Optimize for large lists - use dict comprehension
+        self._selection_state = {
+            video.video_id: not video.is_downloaded 
+            for video in videos
+        }
         
         # Header row
         header = ctk.CTkFrame(self, fg_color=Colors.BG_CARD_HOVER, height=40)
@@ -303,8 +322,8 @@ class PlaylistTable(ctk.CTkScrollableFrame):
             anchor="e"
         ).pack(side="right", padx=(0, 12))
         
-        # Start progressive rendering
-        self._start_progressive_render()
+        # Start progressive rendering (delay to allow window to appear first)
+        self.after(100, self._start_progressive_render)
     
     def _start_progressive_render(self) -> None:
         """Start rendering rows progressively in batches."""
@@ -316,28 +335,47 @@ class PlaylistTable(ctk.CTkScrollableFrame):
     
     def _render_next_batch(self, batch_size: int) -> None:
         """Render the next batch of rows."""
+        if not self.winfo_exists():
+            self._is_rendering = False
+            return
+        
         end_index = min(self._render_index + batch_size, len(self._videos))
         
+        # Create all rows first (faster than creating and packing one by one)
+        rows_to_add = []
         for i in range(self._render_index, end_index):
             video = self._videos[i]
-            row = PlaylistTableRow(
-                self,
-                index=i,
-                video=video,
-                on_toggle=self._on_row_toggle
-            )
-            row.pack(fill="x", pady=1)
-            self._rows[video.video_id] = row
-            
-            # Apply stored selection state
-            if video.video_id in self._selection_state:
-                row.set_selected(self._selection_state[video.video_id])
+            try:
+                row = PlaylistTableRow(
+                    self,
+                    index=i,
+                    video=video,
+                    on_toggle=self._on_row_toggle
+                )
+                rows_to_add.append((video.video_id, row))
+            except Exception:
+                # Skip if row creation fails
+                continue
+        
+        # Pack all rows at once (more efficient - single layout pass)
+        for video_id, row in rows_to_add:
+            try:
+                row.pack(fill="x", pady=1)
+                self._rows[video_id] = row
+                
+                # Apply stored selection state
+                if video_id in self._selection_state:
+                    row.set_selected(self._selection_state[video_id])
+            except Exception:
+                continue
         
         self._render_index = end_index
         
         # Schedule next batch if more rows to render
         if self._render_index < len(self._videos):
-            self.after(self.BATCH_DELAY_MS, 
+            # Use longer delay for large playlists to keep UI responsive
+            delay = self.BATCH_DELAY_MS * 2 if len(self._videos) > 100 else self.BATCH_DELAY_MS
+            self.after(delay, 
                        lambda: self._render_next_batch(self.SUBSEQUENT_BATCH_SIZE))
         else:
             self._is_rendering = False
@@ -448,11 +486,12 @@ class PlaylistViewDialog(ctk.CTkToplevel):
         self.transient(master)
         self.grab_set()
         
-        # Center on parent
-        self.update_idletasks()
-        x = master.winfo_x() + (master.winfo_width() - 800) // 2
-        y = master.winfo_y() + (master.winfo_height() - 600) // 2
-        self.geometry(f"+{x}+{y}")
+        # Center on parent (use after to avoid blocking)
+        def center_dialog():
+            x = master.winfo_x() + (master.winfo_width() - 800) // 2
+            y = master.winfo_y() + (master.winfo_height() - 600) // 2
+            self.geometry(f"+{x}+{y}")
+        self.after(100, center_dialog)
         
         self._create_widgets(playlist_title)
     
@@ -475,18 +514,22 @@ class PlaylistViewDialog(ctk.CTkToplevel):
         )
         title_label.pack(side="left")
         
-        # Count stats
-        new_count = sum(1 for v in self._videos if not v.is_downloaded)
+        # Count stats (optimized - only count what's needed)
         total_count = len(self._videos)
-        stats_text = f"{new_count} new / {total_count} total videos"
+        # For large playlists, show total first, calculate new count lazily
+        if total_count > 100:
+            stats_text = f"{total_count} total videos (loading...)"
+        else:
+            new_count = sum(1 for v in self._videos if not v.is_downloaded)
+            stats_text = f"{new_count} new / {total_count} total videos"
         
-        stats_label = ctk.CTkLabel(
+        self._stats_label = ctk.CTkLabel(
             header,
             text=stats_text,
             font=("Segoe UI", 13),
             text_color=Colors.TEXT_SECONDARY
         )
-        stats_label.pack(side="right")
+        self._stats_label.pack(side="right")
         
         # Selection controls row
         controls = ctk.CTkFrame(container, fg_color="transparent")
@@ -561,6 +604,10 @@ class PlaylistViewDialog(ctk.CTkToplevel):
         )
         self._table.pack(fill="both", expand=True, pady=(0, 16))
         
+        # Update stats after table is created (non-blocking for large playlists)
+        if total_count > 100:
+            self.after(500, self._update_stats_label)
+        
         # Bottom action bar
         action_bar = ctk.CTkFrame(container, fg_color="transparent")
         action_bar.pack(fill="x")
@@ -603,6 +650,18 @@ class PlaylistViewDialog(ctk.CTkToplevel):
             command=self.destroy
         )
         self._cancel_btn.pack(side="right", padx=(0, 12))
+    
+    def _update_stats_label(self) -> None:
+        """Update stats label with accurate count."""
+        try:
+            if not self.winfo_exists() or not hasattr(self, '_stats_label'):
+                return
+            new_count = sum(1 for v in self._videos if not v.is_downloaded)
+            total_count = len(self._videos)
+            stats_text = f"{new_count} new / {total_count} total videos"
+            self._stats_label.configure(text=stats_text)
+        except Exception:
+            pass
     
     def _on_compare_toggle(self) -> None:
         """Handle compare download checkbox toggle."""

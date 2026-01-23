@@ -152,11 +152,38 @@ class Config:
         self.set("theme", value)
 
     def is_cookie_valid(self) -> bool:
-        """Check if configured cookie file exists and is readable."""
+        """Check if configured cookie file exists, is readable, and valid."""
         cookie_path = self.cookie_file
         if not cookie_path:
             return False
-        return Path(cookie_path).is_file()
+        
+        cookie_file = Path(cookie_path)
+        if not cookie_file.is_file():
+            return False
+        
+        # Check if file is corrupted (contains null bytes or is empty)
+        try:
+            with open(cookie_file, "rb") as f:
+                content = f.read()
+                # Check for null bytes (corruption indicator)
+                if b'\x00' in content:
+                    return False
+                # Check if file is empty or too small to be valid Netscape format
+                if len(content) < 50:  # Valid cookie files are usually larger
+                    return False
+                # Check if it starts with Netscape cookie header or valid cookie line
+                text_content = content.decode('utf-8', errors='ignore')
+                if not text_content.strip():
+                    return False
+                # Basic validation: should contain at least one tab (Netscape format uses tabs)
+                if '\t' not in text_content and text_content.strip()[:7] != '# Netscape':
+                    # Might still be valid if it's just cookie data without header
+                    if len(text_content.strip().split('\n')) < 1:
+                        return False
+        except Exception:
+            return False
+        
+        return True
 
     @property
     def ffmpeg_path(self) -> str:

@@ -210,8 +210,19 @@ class Downloader:
             "format_sort": ["res", "ext:mp4:m4a:mp3:webm", "acodec:aac:mp3"],
         }
 
+        # Only use cookie file if it exists and is valid
         if self._cookie_file and Path(self._cookie_file).is_file():
-            opts["cookiefile"] = self._cookie_file
+            # Validate cookie file before using it
+            try:
+                with open(self._cookie_file, "rb") as f:
+                    content = f.read()
+                    # Check for null bytes (corruption indicator)
+                    if b'\x00' in content:
+                        print(f"[WARNING] Cookie file contains null bytes - skipping cookie file")
+                    else:
+                        opts["cookiefile"] = self._cookie_file
+            except Exception as e:
+                print(f"[WARNING] Failed to validate cookie file: {e} - skipping cookie file")
 
         if self._ffmpeg_location:
             opts["ffmpeg_location"] = self._ffmpeg_location
@@ -379,19 +390,12 @@ class Downloader:
         opts["progress_hooks"] = [progress_hook]
 
         try:
-            # Don't suppress stderr - we need to see errors for debugging
-            # with self._suppress_stderr():
-            print(f"[DEBUG] Starting download: {url}")
-            print(f"[DEBUG] Output template: {opts['outtmpl']}")
-            print(f"[DEBUG] Format: {opts.get('format', 'default')}")
-            
+            # Reduced debug output for better performance
             with yt_dlp.YoutubeDL(opts) as ydl:
                 # Get title first
-                print(f"[DEBUG] Extracting info for: {url}")
                 info = ydl.extract_info(url, download=False)
                 if info:
                     current_title[0] = info.get("title", "Unknown")
-                    print(f"[DEBUG] Video title: {current_title[0]}")
 
                 if progress_callback:
                     progress_callback(DownloadProgress(
@@ -403,9 +407,7 @@ class Downloader:
                         filename="",
                     ))
 
-                print(f"[DEBUG] Starting download...")
                 ydl.download([url])
-                print(f"[DEBUG] Download completed successfully")
 
                 if progress_callback:
                     progress_callback(DownloadProgress(
@@ -423,16 +425,12 @@ class Downloader:
             error_msg = str(e)
             error_type = type(e).__name__
             
-            # Print full error to console for debugging
-            print(f"[ERROR] Download failed!")
-            print(f"[ERROR] Type: {error_type}")
-            print(f"[ERROR] Message: {error_msg}")
-            import traceback
-            print(f"[ERROR] Traceback:")
-            traceback.print_exc()
-            
-            # Log the actual error for debugging (but don't show to user unless needed)
-            full_error = f"{error_type}: {error_msg}"
+            # Only print errors to console (reduced verbosity)
+            # Full traceback only for unexpected errors
+            if "Video unavailable" not in error_msg and "not available" not in error_msg.lower():
+                import traceback
+                print(f"[ERROR] Download failed: {error_type}: {error_msg}")
+                traceback.print_exc()
             
             # If format error, try with a simpler fallback format
             if "Requested format is not available" in error_msg or "format is not available" in error_msg.lower():
@@ -474,10 +472,12 @@ class Downloader:
                     error_msg = f"Video unavailable or requires authentication: {str(fallback_error)}"
             
             # Provide more user-friendly error messages
-            if "HTTP Error" in error_msg or "403" in error_msg or "401" in error_msg:
+            if "invalid Netscape format cookies" in error_msg or "cookies file" in error_msg.lower():
+                error_msg = "Invalid cookie file detected. The cookie file appears to be corrupted. Please go to Settings and update your cookies."
+            elif "Video unavailable" in error_msg or "not available" in error_msg.lower() or "Private video" in error_msg:
+                error_msg = "Video is unavailable or has been removed."
+            elif "HTTP Error" in error_msg or "403" in error_msg or "401" in error_msg:
                 error_msg = "Video is private or requires authentication. Try adding a cookie file in Settings."
-            elif "Video unavailable" in error_msg or "Private video" in error_msg:
-                error_msg = "Video is unavailable or private."
             elif "Unsupported URL" in error_msg:
                 error_msg = "Unsupported URL format."
             elif not error_msg or len(error_msg) < 10:

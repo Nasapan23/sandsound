@@ -564,20 +564,36 @@ class ProgressCard(ctk.CTkFrame):
         eta: str = "",
     ) -> None:
         """Update progress display with animation."""
-        if title:
-            # Truncate long titles
-            display_title = title[:50] + "..." if len(title) > 50 else title
-            self._title_label.configure(text=display_title)
-        if status:
-            self._status_label.configure(text=status)
+        try:
+            if not self.winfo_exists():
+                return
+            
+            if title:
+                # Truncate long titles
+                display_title = title[:50] + "..." if len(title) > 50 else title
+                self._title_label.configure(text=display_title)
+            if status:
+                self._status_label.configure(text=status)
 
-        self._progress.set(progress / 100.0)
-        self._percent_label.configure(text=f"{progress:.0f}%")
-        self._speed_label.configure(text=speed)
-        self._eta_label.configure(text=f"ETA {eta}" if eta else "")
-        
-        # Animate status dot
-        self._status_dot.configure(fg_color=Colors.PRIMARY)
+            # Only update progress bar if value changed significantly (reduce redraws)
+            current_progress = self._progress.get() * 100.0
+            if abs(current_progress - progress) >= 1.0 or progress == 0.0 or progress >= 100.0:
+                self._progress.set(progress / 100.0)
+                self._percent_label.configure(text=f"{progress:.0f}%")
+            
+            # Update speed and ETA (these change frequently)
+            if speed:
+                self._speed_label.configure(text=speed)
+            if eta:
+                self._eta_label.configure(text=f"ETA {eta}")
+            else:
+                self._eta_label.configure(text="")
+            
+            # Animate status dot
+            self._status_dot.configure(fg_color=Colors.PRIMARY)
+        except Exception:
+            # Widget may have been destroyed
+            pass
 
     def reset(self) -> None:
         """Reset to initial state."""

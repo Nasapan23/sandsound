@@ -3,7 +3,10 @@ Main application window for SandSound.
 """
 
 import threading
+import time
+import queue
 import customtkinter as ctk
+from pathlib import Path
 from typing import Optional, List
 
 from ..config import Config
@@ -23,6 +26,19 @@ class SandSoundApp(ctk.CTk):
         super().__init__()
 
         self._config = config
+        
+        # Validate and clean cookie file if corrupted
+        if config.cookie_file and Path(config.cookie_file).is_file():
+            try:
+                with open(config.cookie_file, "rb") as f:
+                    content = f.read()
+                    if b'\x00' in content:
+                        # Cookie file is corrupted, clear it
+                        print("[WARNING] Cookie file is corrupted (contains null bytes) - clearing it")
+                        config.cookie_file = ""
+            except Exception:
+                pass
+        
         self._downloader = Downloader(
             download_dir=config.download_dir,
             cookie_file=config.cookie_file if config.is_cookie_valid() else None,
@@ -35,10 +51,27 @@ class SandSoundApp(ctk.CTk):
         self._current_video_info: Optional[VideoInfo] = None
         self._playlist_dialog: Optional[PlaylistViewDialog] = None
         self._entries_map: dict = {}  # For tracking entries during concurrent download
+        
+        # UI update throttling
+        self._progress_queue = queue.Queue(maxsize=10)
+        self._task_update_queue = queue.Queue(maxsize=20)
+        self._aggregate_update_queue = queue.Queue(maxsize=5)
+        self._last_progress_update = 0.0
+        self._last_task_update = 0.0
+        self._last_aggregate_update = 0.0
+        self._progress_update_interval = 0.1  # Update UI max every 100ms
+        self._task_update_interval = 0.15  # Update task UI max every 150ms
+        self._aggregate_update_interval = 0.2  # Update aggregate UI max every 200ms
+        self._pending_progress: Optional[DownloadProgress] = None
+        self._pending_task_update: Optional[tuple] = None
+        self._pending_aggregate_update: Optional[AggregateProgress] = None
 
         self._setup_window()
         self._create_widgets()
         self._apply_theme()
+        
+        # Start progress update scheduler
+        self.after(100, self._schedule_progress_updates)
 
     def _setup_window(self) -> None:
         """Configure main window."""
@@ -46,13 +79,14 @@ class SandSoundApp(ctk.CTk):
         self.geometry("700x600")
         self.minsize(600, 550)
 
-        # Center window on screen
-        self.update_idletasks()
-        width = self.winfo_width()
-        height = self.winfo_height()
-        x = (self.winfo_screenwidth() // 2) - (width // 2)
-        y = (self.winfo_screenheight() // 2) - (height // 2)
-        self.geometry(f"+{x}+{y}")
+        # Center window on screen (use after to avoid blocking)
+        def center_window():
+            width = self.winfo_width()
+            height = self.winfo_height()
+            x = (self.winfo_screenwidth() // 2) - (width // 2)
+            y = (self.winfo_screenheight() // 2) - (height // 2)
+            self.geometry(f"+{x}+{y}")
+        self.after(100, center_window)
 
     def _apply_theme(self) -> None:
         """Apply configured theme."""
@@ -257,40 +291,105 @@ class SandSoundApp(ctk.CTk):
             ).start()
         else:
             self._current_video_info = None
-            self._playlist_bar.pack_forget()
+            self._hide_playlist_bar()
         
         return is_valid
 
     def _fetch_video_info(self, url: str) -> None:
         """Fetch video info in background."""
-        info = self._downloader.get_video_info(url)
-        self._current_video_info = info
-        
-        if info and info.is_playlist:
-            # Update UI on main thread
-            self.after(0, lambda: self._show_playlist_bar(info))
-        else:
-            self.after(0, lambda: self._playlist_bar.pack_forget())
+        try:
+            info = self._downloader.get_video_info(url)
+            self._current_video_info = info
+            
+            # Update UI on main thread - create a closure to capture info correctly
+            def update_ui():
+                try:
+                    if info and info.is_playlist:
+                        self._show_playlist_bar(info)
+                    else:
+                        self._hide_playlist_bar()
+                except Exception as e:
+                    print(f"Error updating UI: {e}")
+                    import traceback
+                    traceback.print_exc()
+            
+            self.after(0, update_ui)
+        except Exception as e:
+            # Log error but don't crash - just hide the playlist bar
+            print(f"Error fetching video info: {e}")
+            import traceback
+            traceback.print_exc()
+            self._current_video_info = None
+            self.after(0, self._hide_playlist_bar)
 
+    def _hide_playlist_bar(self) -> None:
+        """Hide playlist info bar."""
+        try:
+            # Check if widget exists and is viewable
+            if hasattr(self, '_playlist_bar') and self._playlist_bar.winfo_exists():
+                try:
+                    if self._playlist_bar.winfo_viewable():
+                        self._playlist_bar.pack_forget()
+                except Exception:
+                    # Widget might be in a weird state, try pack_forget anyway
+                    try:
+                        self._playlist_bar.pack_forget()
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+    
     def _show_playlist_bar(self, info: VideoInfo) -> None:
         """Show playlist info bar."""
-        # Count new videos
-        if info.playlist_id and info.entries:
-            downloaded_ids = self._history.get_downloaded_video_ids(info.playlist_id)
-            new_count = sum(1 for e in info.entries if e.video_id not in downloaded_ids)
-            total = len(info.entries)
+        try:
+            # Ensure widget exists
+            if not hasattr(self, '_playlist_bar') or not self._playlist_bar.winfo_exists():
+                print("Error: Playlist bar widget does not exist")
+                return
             
-            if new_count == total:
-                text = f"Playlist: {info.title} ({total} videos)"
+            # Count new videos
+            if info.playlist_id and info.entries:
+                downloaded_ids = self._history.get_downloaded_video_ids(info.playlist_id)
+                new_count = sum(1 for e in info.entries if e.video_id not in downloaded_ids)
+                total = len(info.entries)
+                
+                if new_count == total:
+                    text = f"Playlist: {info.title} ({total} videos)"
+                else:
+                    text = f"Playlist: {info.title} ({new_count} new / {total} total)"
+                
+                self._playlist_info_label.configure(text=text)
             else:
-                text = f"Playlist: {info.title} ({new_count} new / {total} total)"
+                self._playlist_info_label.configure(text=f"Playlist: {info.title}")
             
-            self._playlist_info_label.configure(text=text)
-        else:
-            self._playlist_info_label.configure(text=f"Playlist: {info.title}")
-        
-        # Show the bar
-        self._playlist_bar.pack(fill="x", pady=(0, 15), after=self._url_input)
+            # Show the bar - ensure it's packed after url_input
+            # First check if it's already visible
+            is_visible = False
+            try:
+                is_visible = self._playlist_bar.winfo_viewable()
+            except Exception:
+                pass
+            
+            if not is_visible:
+                # Pack it after url_input - use after parameter for correct positioning
+                try:
+                    # Try with after parameter first
+                    self._playlist_bar.pack(fill="x", pady=(0, 15), after=self._url_input)
+                except Exception as e1:
+                    # Fallback: try packing without after
+                    try:
+                        self._playlist_bar.pack(fill="x", pady=(0, 15))
+                        # Try to reorder by lifting url_input above it, then packing playlist bar
+                        self._url_input.lift()
+                        self._playlist_bar.pack(fill="x", pady=(0, 15))
+                    except Exception as e2:
+                        print(f"Error packing playlist bar: {e1}, {e2}")
+                        import traceback
+                        traceback.print_exc()
+        except Exception as e:
+            print(f"Error showing playlist bar: {e}")
+            import traceback
+            traceback.print_exc()
 
     def _open_playlist_view(self) -> None:
         """Open playlist view dialog."""
@@ -299,23 +398,27 @@ class SandSoundApp(ctk.CTk):
         
         info = self._current_video_info
         
-        # Build video list with download status
-        videos = []
+        # Get downloaded IDs first (single operation)
         downloaded_ids = set()
         if info.playlist_id:
             downloaded_ids = self._history.get_downloaded_video_ids(info.playlist_id)
         
+        # Build video list efficiently using list comprehension
+        videos = []
         if info.entries:
-            for entry in info.entries:
-                videos.append(PlaylistVideo(
+            # Use list comprehension for better performance
+            videos = [
+                PlaylistVideo(
                     video_id=entry.video_id,
                     title=entry.title,
                     duration=entry.duration,
                     thumbnail=entry.thumbnail,
                     is_downloaded=entry.video_id in downloaded_ids
-                ))
+                )
+                for entry in info.entries
+            ]
         
-        # Open dialog
+        # Open dialog immediately (rendering happens progressively)
         self._playlist_dialog = PlaylistViewDialog(
             self,
             playlist_title=info.title,
@@ -372,8 +475,8 @@ class SandSoundApp(ctk.CTk):
         self._download_manager = DownloadManager(
             downloader=self._downloader,
             max_workers=4,  # Download 4 songs simultaneously
-            on_task_update=lambda t: self.after(0, lambda: self._on_task_update(t, info)),
-            on_aggregate_update=lambda a: self.after(0, lambda: self._on_aggregate_update(a)),
+            on_task_update=lambda t: self._queue_task_update(t, info),
+            on_aggregate_update=lambda a: self._queue_aggregate_update(a),
             on_batch_complete=lambda: self.after(0, self._playlist_download_complete),
         )
         
@@ -382,59 +485,69 @@ class SandSoundApp(ctk.CTk):
     
     def _on_task_update(self, task: DownloadTask, info: VideoInfo) -> None:
         """Handle individual task status updates."""
-        if not self._playlist_dialog:
-            return
-        
-        # Map task status to video status
-        status_map = {
-            TaskStatus.QUEUED: VideoStatus.PENDING,
-            TaskStatus.ACTIVE: VideoStatus.DOWNLOADING,
-            TaskStatus.COMPLETED: VideoStatus.COMPLETED,
-            TaskStatus.FAILED: VideoStatus.FAILED,
-            TaskStatus.CANCELLED: VideoStatus.FAILED,
-        }
-        
-        video_status = status_map.get(task.status, VideoStatus.PENDING)
-        self._playlist_dialog.update_video_status(
-            task.task_id, video_status, task.progress
-        )
-        
-        # Record in history when completed
-        if task.status == TaskStatus.COMPLETED:
-            entry = self._entries_map.get(task.task_id)
-            if entry:
-                self._history.add_video_download(
-                    video_id=task.task_id,
-                    title=entry.title,
-                    format_type=task.format_type,
-                    quality=task.quality,
-                    playlist_id=info.playlist_id,
-                    playlist_url=info.url,
-                    playlist_title=info.title
-                )
+        try:
+            if not self._playlist_dialog or not self._playlist_dialog.winfo_exists():
+                return
+            
+            # Map task status to video status
+            status_map = {
+                TaskStatus.QUEUED: VideoStatus.PENDING,
+                TaskStatus.ACTIVE: VideoStatus.DOWNLOADING,
+                TaskStatus.COMPLETED: VideoStatus.COMPLETED,
+                TaskStatus.FAILED: VideoStatus.FAILED,
+                TaskStatus.CANCELLED: VideoStatus.FAILED,
+            }
+            
+            video_status = status_map.get(task.status, VideoStatus.PENDING)
+            self._playlist_dialog.update_video_status(
+                task.task_id, video_status, task.progress
+            )
+            
+            # Record in history when completed
+            if task.status == TaskStatus.COMPLETED:
+                entry = self._entries_map.get(task.task_id)
+                if entry:
+                    self._history.add_video_download(
+                        video_id=task.task_id,
+                        title=entry.title,
+                        format_type=task.format_type,
+                        quality=task.quality,
+                        playlist_id=info.playlist_id,
+                        playlist_url=info.url,
+                        playlist_title=info.title
+                    )
+        except Exception:
+            # Widget may have been destroyed
+            pass
     
     def _on_aggregate_update(self, aggregate: AggregateProgress) -> None:
         """Handle aggregate progress updates for main progress card."""
-        # Build status text showing concurrent download info
-        if aggregate.active_tasks > 0:
-            if aggregate.active_tasks == 1:
-                title = aggregate.active_titles[0] if aggregate.active_titles else "Downloading..."
-            else:
-                title = f"Downloading {aggregate.active_tasks} songs..."
-            
-            status = f"{aggregate.completed_tasks}/{aggregate.total_tasks} completed"
-            
-            self._progress_card.update_progress(
-                title=title,
-                status=status,
-                progress=aggregate.overall_progress,
-                speed=aggregate.total_speed,
-                eta="",
-            )
-        elif aggregate.completed_tasks == aggregate.total_tasks:
-            self._progress_card.set_completed(
-                f"Completed {aggregate.completed_tasks} downloads"
-            )
+        try:
+            if not self.winfo_exists():
+                return
+            # Build status text showing concurrent download info
+            if aggregate.active_tasks > 0:
+                if aggregate.active_tasks == 1:
+                    title = aggregate.active_titles[0] if aggregate.active_titles else "Downloading..."
+                else:
+                    title = f"Downloading {aggregate.active_tasks} songs..."
+                
+                status = f"{aggregate.completed_tasks}/{aggregate.total_tasks} completed"
+                
+                self._progress_card.update_progress(
+                    title=title,
+                    status=status,
+                    progress=aggregate.overall_progress,
+                    speed=aggregate.total_speed,
+                    eta="",
+                )
+            elif aggregate.completed_tasks == aggregate.total_tasks:
+                self._progress_card.set_completed(
+                    f"Completed {aggregate.completed_tasks} downloads"
+                )
+        except Exception:
+            # Widget may have been destroyed
+            pass
 
     def _playlist_download_complete(self) -> None:
         """Reset UI after playlist download completes."""
@@ -517,8 +630,18 @@ class SandSoundApp(ctk.CTk):
     def _download_worker(self, url: str, format_type: str, quality: str) -> None:
         """Download worker thread."""
         def progress_callback(progress: DownloadProgress) -> None:
-            # Schedule UI update on main thread
-            self.after(0, lambda: self._update_progress(progress))
+            # Throttle UI updates - only queue if enough time has passed
+            current_time = time.time()
+            if current_time - self._last_progress_update >= self._progress_update_interval:
+                # Queue update for main thread
+                try:
+                    self._progress_queue.put_nowait(progress)
+                except queue.Full:
+                    pass  # Skip if queue is full
+                self._last_progress_update = current_time
+            else:
+                # Store latest progress for next update
+                self._pending_progress = progress
 
         success = self._downloader.download(
             url=url,
@@ -529,6 +652,90 @@ class SandSoundApp(ctk.CTk):
 
         # Reset state on main thread
         self.after(0, self._download_complete)
+    
+    def _schedule_progress_updates(self) -> None:
+        """Schedule periodic progress updates from queue."""
+        current_time = time.time()
+        
+        # Process progress updates
+        if current_time - self._last_progress_update >= self._progress_update_interval:
+            updates_processed = 0
+            latest_progress = None
+            while updates_processed < 5:  # Process max 5 updates per cycle
+                try:
+                    latest_progress = self._progress_queue.get_nowait()
+                    updates_processed += 1
+                except queue.Empty:
+                    break
+            
+            if latest_progress:
+                self._update_progress(latest_progress)
+                self._last_progress_update = current_time
+            elif self._pending_progress:
+                self._update_progress(self._pending_progress)
+                self._pending_progress = None
+                self._last_progress_update = current_time
+        
+        # Process task updates
+        if current_time - self._last_task_update >= self._task_update_interval:
+            latest_task = None
+            while True:
+                try:
+                    latest_task = self._task_update_queue.get_nowait()
+                except queue.Empty:
+                    break
+            
+            if latest_task:
+                task, info = latest_task
+                self._on_task_update(task, info)
+                self._last_task_update = current_time
+            elif self._pending_task_update:
+                task, info = self._pending_task_update
+                self._on_task_update(task, info)
+                self._pending_task_update = None
+                self._last_task_update = current_time
+        
+        # Process aggregate updates
+        if current_time - self._last_aggregate_update >= self._aggregate_update_interval:
+            latest_aggregate = None
+            while True:
+                try:
+                    latest_aggregate = self._aggregate_update_queue.get_nowait()
+                except queue.Empty:
+                    break
+            
+            if latest_aggregate:
+                self._on_aggregate_update(latest_aggregate)
+                self._last_aggregate_update = current_time
+            elif self._pending_aggregate_update:
+                self._on_aggregate_update(self._pending_aggregate_update)
+                self._pending_aggregate_update = None
+                self._last_aggregate_update = current_time
+        
+        # Schedule next update check
+        self.after(50, self._schedule_progress_updates)  # Check every 50ms
+    
+    def _queue_task_update(self, task: DownloadTask, info: VideoInfo) -> None:
+        """Queue task update for throttled processing."""
+        current_time = time.time()
+        if current_time - self._last_task_update >= self._task_update_interval:
+            try:
+                self._task_update_queue.put_nowait((task, info))
+            except queue.Full:
+                self._pending_task_update = (task, info)
+        else:
+            self._pending_task_update = (task, info)
+    
+    def _queue_aggregate_update(self, aggregate: AggregateProgress) -> None:
+        """Queue aggregate update for throttled processing."""
+        current_time = time.time()
+        if current_time - self._last_aggregate_update >= self._aggregate_update_interval:
+            try:
+                self._aggregate_update_queue.put_nowait(aggregate)
+            except queue.Full:
+                self._pending_aggregate_update = aggregate
+        else:
+            self._pending_aggregate_update = aggregate
 
     def _update_progress(self, progress: DownloadProgress) -> None:
         """Update UI with download progress."""

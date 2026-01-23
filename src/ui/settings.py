@@ -201,8 +201,17 @@ class SettingsDialog(ctk.CTkToplevel):
 
         if self._config.is_cookie_valid():
             try:
-                with open(self._config.cookie_file, "r", encoding="utf-8") as f:
-                    self._cookie_text.insert("1.0", f.read())
+                with open(self._config.cookie_file, "rb") as f:
+                    content = f.read()
+                    # Check for null bytes (corruption)
+                    if b'\x00' in content:
+                        # File is corrupted, clear it
+                        self._config.cookie_file = ""
+                        print("[WARNING] Cookie file is corrupted and has been cleared")
+                    else:
+                        # File is valid, read as text
+                        with open(self._config.cookie_file, "r", encoding="utf-8") as f_text:
+                            self._cookie_text.insert("1.0", f_text.read())
             except Exception:
                 pass
 
@@ -333,16 +342,23 @@ class SettingsDialog(ctk.CTkToplevel):
         # Save cookies to file
         cookie_content = self._cookie_text.get("1.0", "end").strip()
         if cookie_content:
-            cookie_dir = Path.home() / ".sandsound"
-            cookie_dir.mkdir(parents=True, exist_ok=True)
-            cookie_path = cookie_dir / "cookies.txt"
-            
-            try:
-                with open(cookie_path, "w", encoding="utf-8") as f:
-                    f.write(cookie_content)
-                self._config.cookie_file = str(cookie_path)
-            except Exception as e:
-                print(f"Failed to save cookies: {e}")
+            # Validate cookie content doesn't contain null bytes
+            if '\x00' in cookie_content:
+                print("[ERROR] Cookie content contains null bytes - not saving corrupted cookies")
+                self._config.cookie_file = ""
+            else:
+                cookie_dir = Path.home() / ".sandsound"
+                cookie_dir.mkdir(parents=True, exist_ok=True)
+                cookie_path = cookie_dir / "cookies.txt"
+                
+                try:
+                    # Write in binary mode to ensure no encoding issues
+                    with open(cookie_path, "wb") as f:
+                        f.write(cookie_content.encode('utf-8'))
+                    self._config.cookie_file = str(cookie_path)
+                except Exception as e:
+                    print(f"Failed to save cookies: {e}")
+                    self._config.cookie_file = ""
         else:
             self._config.cookie_file = ""
 
