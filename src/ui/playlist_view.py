@@ -603,7 +603,7 @@ class PlaylistViewDialog(ctk.CTkToplevel):
             on_selection_change=self._on_selection_change
         )
         self._table.pack(fill="both", expand=True, pady=(0, 16))
-        
+         
         # Update stats after table is created (non-blocking for large playlists)
         if total_count > 100:
             self.after(500, self._update_stats_label)
