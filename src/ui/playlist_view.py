@@ -150,12 +150,12 @@ class PlaylistTableRow(ctk.CTkFrame):
             VideoStatus.PENDING: "Pending",
             VideoStatus.DOWNLOADING: "Downloading...",
             VideoStatus.PROCESSING: "Processing...",
-            VideoStatus.COMPLETED: "✓ Done",
+            VideoStatus.COMPLETED: "Done",
             VideoStatus.SKIPPED: "Skipped",
-            VideoStatus.FAILED: "✗ Failed"
+            VideoStatus.FAILED: "Failed"
         }
         if self._video.is_downloaded and self._video.status == VideoStatus.PENDING:
-            return "✓ Downloaded"
+            return "Downloaded"
         return status_map.get(self._video.status, "Pending")
     
     def _get_status_color(self) -> str:

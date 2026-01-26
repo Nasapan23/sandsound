@@ -203,7 +203,7 @@ class SandSoundApp(ctk.CTk):
         
         self._playlist_icon = ctk.CTkLabel(
             inner,
-            text="🎵",
+            text="Playlist",
             font=("Segoe UI", 16),
         )
         self._playlist_icon.pack(side="left", padx=(0, 10))

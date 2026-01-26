@@ -139,7 +139,7 @@ class PlaylistHistoryRow(ctk.CTkFrame):
     def set_new_count(self, count: int) -> None:
         """Update the new videos indicator."""
         if count > 0:
-            self._new_indicator.configure(text=f"✨ {count} new song{'s' if count != 1 else ''}")
+            self._new_indicator.configure(text=f"{count} new song{'s' if count != 1 else ''}")
             self._new_indicator.pack(side="left", padx=(12, 0))
         else:
             self._new_indicator.pack_forget()

@@ -93,7 +93,7 @@ class SettingsDialog(ctk.CTkToplevel):
         is_available = self._config.is_ffmpeg_available()
         self._ffmpeg_status = ctk.CTkLabel(
             header,
-            text="✓ Available" if is_available else "✗ Not found",
+            text="Available" if is_available else "Not found",
             font=("Segoe UI", 11),
             text_color=Colors.SUCCESS if is_available else Colors.ERROR
         )
@@ -102,7 +102,7 @@ class SettingsDialog(ctk.CTkToplevel):
         # Info text
         info_text = "FFmpeg is required for audio conversion (MP3, etc.)"
         if not is_available:
-            info_text = "⚠️ FFmpeg not found! Required for audio conversion."
+            info_text = "Warning: FFmpeg not found! Required for audio conversion."
         
         info_label = ctk.CTkLabel(
             ffmpeg_frame,
@@ -142,7 +142,7 @@ class SettingsDialog(ctk.CTkToplevel):
 
         download_btn = ctk.CTkButton(
             download_frame,
-            text="📥 Download FFmpeg",
+            text="Download FFmpeg",
             height=36,
             font=("Segoe UI Semibold", 12),
             fg_color=Colors.PRIMARY,
@@ -177,7 +177,7 @@ class SettingsDialog(ctk.CTkToplevel):
 
         self._cookie_status = ctk.CTkLabel(
             cookie_header,
-            text="✓ Saved" if self._config.is_cookie_valid() else "Not configured",
+            text="Saved" if self._config.is_cookie_valid() else "Not configured",
             font=("Segoe UI", 11),
             text_color=Colors.SUCCESS if self._config.is_cookie_valid() else Colors.TEXT_MUTED
         )

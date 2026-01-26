@@ -11,6 +11,8 @@
 
 Perfect for musicians, content creators, and anyone who needs a reliable YouTube downloader.
 
+> **Note**: SandSound is a GUI wrapper built on top of [yt-dlp](https://github.com/yt-dlp/yt-dlp), adding features like download history tracking, playlist management, smart re-download detection, and a modern desktop interface. All core downloading functionality is powered by yt-dlp.
+
 [Features](#-features) • [Installation](#-installation) • [Usage](#-usage) • [Contributing](#-contributing) • [License](#-license)
 
 </div>
@@ -47,12 +49,12 @@ SandSound is a modern, open-source desktop application for downloading YouTube v
 ## Features
 
 ### Core Functionality
-- 🎬 **Audio & Video Downloads** - Support for MP3, M4A, OPUS, FLAC, WAV, MP4, WebM, MKV
-- 📋 **Playlist Support** - Visual table view showing each video with download status
-- 🔄 **Smart Re-download** - Automatically detects and downloads only new videos from playlists
-- 🍪 **Cookie Authentication** - Paste cookies directly for accessing age-restricted content
-- 📊 **Download History** - Persistent tracking of downloaded content with playlist management
-- ⚡ **Concurrent Downloads** - Download up to 4 files simultaneously for faster processing
+- **Audio & Video Downloads** - Support for MP3, M4A, OPUS, FLAC, WAV, MP4, WebM, MKV
+- **Playlist Support** - Visual table view showing each video with download status
+- **Smart Re-download** - Automatically detects and downloads only new videos from playlists
+- **Cookie Authentication** - Paste cookies directly for accessing age-restricted content
+- **Download History** - Persistent tracking of downloaded content with playlist management
+- **Concurrent Downloads** - Download up to 4 files simultaneously for faster processing
 
 ### User Experience
 - **Modern Dark UI** - Clean, premium design built with CustomTkinter
@@ -166,7 +168,7 @@ Access settings via the Settings button in the top-right:
 - Manage cookie file
 - Adjust theme preferences
 
-## 📁 Configuration
+## Configuration
 
 All settings are stored in `~/.sandsound/` (or `%USERPROFILE%\.sandsound\` on Windows):
 
@@ -277,8 +279,8 @@ This project is tagged with the following topics for easy discovery:
 
 <div align="center">
 
-**Crafted with ❤️ by the SandSound community — primary maintainer: Nisipeanu Ionut**
+**Crafted by the SandSound community — primary maintainer: Nisipeanu Ionut**
 
-⭐ Star this repo if you find it useful!
+Star this repo if you find it useful!
 
 </div>
