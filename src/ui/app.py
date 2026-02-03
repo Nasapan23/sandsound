@@ -48,7 +48,10 @@ class SandSoundApp(ctk.CTk):
         self._download_manager: Optional[DownloadManager] = None
         self._download_thread: Optional[threading.Thread] = None
         self._is_downloading = False
+        self._cancel_event: Optional[threading.Event] = None
         self._current_video_info: Optional[VideoInfo] = None
+        self._pending_playlist_url: Optional[str] = None
+        self._playlist_fetch_in_progress = False
         self._playlist_dialog: Optional[PlaylistViewDialog] = None
         self._entries_map: dict = {}  # For tracking entries during concurrent download
         
@@ -283,6 +286,12 @@ class SandSoundApp(ctk.CTk):
         is_valid = Downloader.is_valid_url(url)
         
         if is_valid:
+            # Show playlist bar immediately for playlist URLs
+            if "playlist" in url.lower():
+                self._pending_playlist_url = url
+                self._show_playlist_bar(None)
+            else:
+                self._pending_playlist_url = None
             # Check for playlist in background
             threading.Thread(
                 target=self._fetch_video_info,
@@ -305,9 +314,14 @@ class SandSoundApp(ctk.CTk):
             def update_ui():
                 try:
                     if info and info.is_playlist:
+                        self._pending_playlist_url = info.url
                         self._show_playlist_bar(info)
                     else:
-                        self._hide_playlist_bar()
+                        if "playlist" in url.lower():
+                            self._pending_playlist_url = url
+                            self._show_playlist_bar(None)
+                        else:
+                            self._hide_playlist_bar()
                 except Exception as e:
                     print(f"Error updating UI: {e}")
                     import traceback
@@ -320,7 +334,11 @@ class SandSoundApp(ctk.CTk):
             import traceback
             traceback.print_exc()
             self._current_video_info = None
-            self.after(0, self._hide_playlist_bar)
+            if "playlist" in url.lower():
+                self._pending_playlist_url = url
+                self.after(0, lambda: self._show_playlist_bar(None))
+            else:
+                self.after(0, self._hide_playlist_bar)
 
     def _hide_playlist_bar(self) -> None:
         """Hide playlist info bar."""
@@ -339,7 +357,7 @@ class SandSoundApp(ctk.CTk):
         except Exception:
             pass
     
-    def _show_playlist_bar(self, info: VideoInfo) -> None:
+    def _show_playlist_bar(self, info: Optional[VideoInfo]) -> None:
         """Show playlist info bar."""
         try:
             # Ensure widget exists
@@ -348,19 +366,22 @@ class SandSoundApp(ctk.CTk):
                 return
             
             # Count new videos
-            if info.playlist_id and info.entries:
-                downloaded_ids = self._history.get_downloaded_video_ids(info.playlist_id)
-                new_count = sum(1 for e in info.entries if e.video_id not in downloaded_ids)
-                total = len(info.entries)
-                
-                if new_count == total:
-                    text = f"Playlist: {info.title} ({total} videos)"
+            if info:
+                if info.playlist_id and info.entries:
+                    downloaded_ids = self._history.get_downloaded_video_ids(info.playlist_id)
+                    new_count = sum(1 for e in info.entries if e.video_id not in downloaded_ids)
+                    total = len(info.entries)
+                    
+                    if new_count == total:
+                        text = f"Playlist: {info.title} ({total} videos)"
+                    else:
+                        text = f"Playlist: {info.title} ({new_count} new / {total} total)"
+                    
+                    self._playlist_info_label.configure(text=text)
                 else:
-                    text = f"Playlist: {info.title} ({new_count} new / {total} total)"
-                
-                self._playlist_info_label.configure(text=text)
+                    self._playlist_info_label.configure(text=f"Playlist: {info.title}")
             else:
-                self._playlist_info_label.configure(text=f"Playlist: {info.title}")
+                self._playlist_info_label.configure(text="Playlist detected")
             
             # Show the bar - ensure it's packed after url_input
             # First check if it's already visible
@@ -394,6 +415,21 @@ class SandSoundApp(ctk.CTk):
     def _open_playlist_view(self) -> None:
         """Open playlist view dialog."""
         if not self._current_video_info or not self._current_video_info.is_playlist:
+            url = self._pending_playlist_url or self._url_input.get_url()
+            if not url or "playlist" not in url.lower():
+                return
+            if self._playlist_fetch_in_progress:
+                return
+            self._playlist_fetch_in_progress = True
+            try:
+                self._view_playlist_btn.configure(state="disabled", text="Loading...")
+            except Exception:
+                pass
+            threading.Thread(
+                target=self._fetch_and_open_playlist,
+                args=(url,),
+                daemon=True
+            ).start()
             return
         
         info = self._current_video_info
@@ -424,8 +460,35 @@ class SandSoundApp(ctk.CTk):
             playlist_title=info.title,
             playlist_id=info.playlist_id or "",
             videos=videos,
-            on_download=self._start_playlist_download
+            on_download=self._start_playlist_download,
+            on_cancel=self._cancel_playlist_download
         )
+
+    def _fetch_and_open_playlist(self, url: str) -> None:
+        """Fetch playlist info and open dialog when ready."""
+        info = None
+        try:
+            info = self._downloader.get_video_info(url)
+        except Exception:
+            info = None
+
+        def finish():
+            self._playlist_fetch_in_progress = False
+            try:
+                self._view_playlist_btn.configure(state="normal", text="View Playlist")
+            except Exception:
+                pass
+
+            if info and info.is_playlist:
+                self._current_video_info = info
+                self._pending_playlist_url = info.url
+                self._show_playlist_bar(info)
+                self._open_playlist_view()
+            else:
+                self._progress_card.set_error("Error", "Could not load playlist info")
+                self._show_playlist_bar(None)
+
+        self.after(0, finish)
 
     def _start_playlist_download(self, video_ids: List[str], compare_download: bool) -> None:
         """Start downloading selected playlist videos concurrently."""
@@ -474,7 +537,7 @@ class SandSoundApp(ctk.CTk):
         # Create download manager with callbacks
         self._download_manager = DownloadManager(
             downloader=self._downloader,
-            max_workers=4,  # Download 4 songs simultaneously
+            max_workers=int(self._config.get("concurrent_downloads", 4)),
             on_task_update=lambda t: self._queue_task_update(t, info),
             on_aggregate_update=lambda a: self._queue_aggregate_update(a),
             on_batch_complete=lambda: self.after(0, self._playlist_download_complete),
@@ -495,7 +558,7 @@ class SandSoundApp(ctk.CTk):
                 TaskStatus.ACTIVE: VideoStatus.DOWNLOADING,
                 TaskStatus.COMPLETED: VideoStatus.COMPLETED,
                 TaskStatus.FAILED: VideoStatus.FAILED,
-                TaskStatus.CANCELLED: VideoStatus.FAILED,
+                TaskStatus.CANCELLED: VideoStatus.CANCELLED,
             }
             
             video_status = status_map.get(task.status, VideoStatus.PENDING)
@@ -552,7 +615,7 @@ class SandSoundApp(ctk.CTk):
     def _playlist_download_complete(self) -> None:
         """Reset UI after playlist download completes."""
         self._is_downloading = False
-        self._download_btn.configure(state="normal", text="Download")
+        self._reset_download_button()
         if self._playlist_dialog:
             self._playlist_dialog.set_downloading(False)
 
@@ -610,12 +673,20 @@ class SandSoundApp(ctk.CTk):
             return
 
         # If it's a playlist, open playlist view instead
-        if self._current_video_info and self._current_video_info.is_playlist:
+        if "playlist" in url.lower() or (self._current_video_info and self._current_video_info.is_playlist):
+            self._pending_playlist_url = url
             self._open_playlist_view()
             return
 
         self._is_downloading = True
-        self._download_btn.configure(state="disabled", text="Downloading...")
+        self._cancel_event = threading.Event()
+        self._download_btn.configure(
+            state="normal",
+            text="Cancel Download",
+            fg_color=Colors.ERROR,
+            hover_color=Colors.ERROR_DARK,
+            command=self._cancel_download,
+        )
 
         format_type = self._format_selector.get_format()
         quality = self._format_selector.get_quality()
@@ -648,10 +719,44 @@ class SandSoundApp(ctk.CTk):
             format_type=format_type,
             quality=quality,
             progress_callback=progress_callback,
+            cancel_event=self._cancel_event,
         )
 
         # Reset state on main thread
         self.after(0, self._download_complete)
+    
+    def _cancel_download(self) -> None:
+        """Cancel the current single download."""
+        if not self._is_downloading or not self._cancel_event:
+            return
+        self._cancel_event.set()
+        self._download_btn.configure(
+            state="disabled",
+            text="Cancelling...",
+            fg_color=Colors.BG_INPUT,
+            hover_color=Colors.BG_INPUT,
+        )
+        self._progress_card.update_progress(
+            title="Cancelling...",
+            status="Cancelling download...",
+            progress=0.0,
+            speed="",
+            eta="",
+        )
+    
+    def _cancel_playlist_download(self) -> None:
+        """Cancel all playlist downloads."""
+        if not self._download_manager or not self._is_downloading:
+            return
+        self._download_manager.cancel_all()
+        self._progress_card.update_progress(
+            title="Cancelled",
+            status="Downloads cancelled",
+            progress=0.0,
+            speed="",
+            eta="",
+        )
+        self.after(0, self._playlist_download_complete)
     
     def _schedule_progress_updates(self) -> None:
         """Schedule periodic progress updates from queue."""
@@ -764,5 +869,16 @@ class SandSoundApp(ctk.CTk):
     def _download_complete(self) -> None:
         """Reset UI after download completes."""
         self._is_downloading = False
-        self._download_btn.configure(state="normal", text="Download")
+        self._cancel_event = None
+        self._reset_download_button()
         self._url_input.clear()
+
+    def _reset_download_button(self) -> None:
+        """Reset download button to default state."""
+        self._download_btn.configure(
+            state="normal",
+            text="Download",
+            fg_color=Colors.PRIMARY,
+            hover_color=Colors.PRIMARY_DARK,
+            command=self._start_download,
+        )

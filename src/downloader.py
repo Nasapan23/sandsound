@@ -7,6 +7,7 @@ import os
 import re
 import sys
 import threading
+from datetime import datetime
 from dataclasses import dataclass
 from enum import Enum
 from io import StringIO
@@ -14,6 +15,7 @@ from pathlib import Path
 from typing import Callable, List, Optional
 
 import yt_dlp
+from yt_dlp.utils import DownloadCancelled
 
 
 class DownloadStatus(Enum):
@@ -76,6 +78,43 @@ class _QuietLogger:
     
     def error(self, msg: str) -> None:
         pass
+
+
+class _FileLogger:
+    """File logger for yt-dlp output."""
+
+    def __init__(self, log_path: Path) -> None:
+        self._log_path = Path(log_path)
+        self._log_path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
+        self._tee_stdout = bool(getattr(sys.stdout, "isatty", lambda: False)())
+
+    def _write(self, level: str, msg: str) -> None:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        line = f"[{timestamp}] [{level}] {msg}\n"
+        with self._lock:
+            try:
+                with open(self._log_path, "a", encoding="utf-8", errors="ignore") as f:
+                    f.write(line)
+            except Exception:
+                pass
+        if self._tee_stdout:
+            try:
+                print(msg)
+            except Exception:
+                pass
+
+    def debug(self, msg: str) -> None:
+        self._write("DEBUG", msg)
+
+    def info(self, msg: str) -> None:
+        self._write("INFO", msg)
+
+    def warning(self, msg: str) -> None:
+        self._write("WARN", msg)
+
+    def error(self, msg: str) -> None:
+        self._write("ERROR", msg)
 
 
 class _SuppressStderr:
@@ -146,6 +185,8 @@ class Downloader:
         self._cookie_file = cookie_file
         self._ffmpeg_location = ffmpeg_location
         self._cancel_flag = threading.Event()
+        self._log_path = Path.home() / ".sandsound" / "sandsound.log"
+        self._logger = _FileLogger(self._log_path)
 
     def set_cookie_file(self, cookie_file: str) -> None:
         """Update the cookie file path."""
@@ -204,8 +245,12 @@ class Downloader:
             "ignoreerrors": False,  # We handle errors ourselves
             "extract_flat": False,
             "no_check_certificates": True,
-            # Don't suppress logger - we need to see errors
-            # "logger": _QuietLogger(),  # Commented out to see errors
+            "logger": self._logger,
+            # Fail fast on HTTP errors (e.g. 403) so batch does not block
+            "retries": 3,
+            "fragment_retries": 3,
+            "extractor_retries": 3,
+            "socket_timeout": 30,
             # Use more permissive format selection
             "format_sort": ["res", "ext:mp4:m4a:mp3:webm", "acodec:aac:mp3"],
         }
@@ -293,6 +338,7 @@ class Downloader:
         quality: str = "best",
         progress_callback: Optional[Callable[[DownloadProgress], None]] = None,
         playlist_title: Optional[str] = None,
+        cancel_event: Optional[threading.Event] = None,
     ) -> bool:
         """
         Download video or playlist.
@@ -307,10 +353,13 @@ class Downloader:
         Returns:
             True if download succeeded, False otherwise.
         """
-        self._cancel_flag.clear()
+        # Only clear the shared cancel flag when no per-task event is provided.
+        if cancel_event is None:
+            self._cancel_flag.clear()
 
         is_audio = format_type in self.AUDIO_FORMATS
         opts = self._get_base_options(playlist_title=playlist_title)
+        active_cancel = cancel_event or self._cancel_flag
 
         # Set format based on type
         if is_audio:
@@ -341,13 +390,39 @@ class Downloader:
         # Progress hook
         current_title = ["Unknown"]
 
-        def progress_hook(d: dict) -> None:
-            if self._cancel_flag.is_set():
-                raise Exception("Download cancelled")
+        def _is_cancelled() -> bool:
+            return active_cancel.is_set()
 
-            if progress_callback is None:
+        def _notify_cancel(progress: float, filename: str = "") -> None:
+            if progress_callback:
+                progress_callback(DownloadProgress(
+                    status=DownloadStatus.CANCELLED,
+                    title=current_title[0],
+                    progress=progress,
+                    speed="",
+                    eta="",
+                    filename=filename,
+                    error="Download cancelled.",
+                ))
+
+        def _maybe_set_title(info: Optional[dict]) -> None:
+            if not info or current_title[0] != "Unknown":
                 return
+            title = info.get("title")
+            if title:
+                current_title[0] = title
+                if progress_callback:
+                    progress_callback(DownloadProgress(
+                        status=DownloadStatus.PENDING,
+                        title=current_title[0],
+                        progress=0.0,
+                        speed="",
+                        eta="",
+                        filename="",
+                    ))
 
+        def progress_hook(d: dict) -> None:
+            _maybe_set_title(d.get("info_dict"))
             status = DownloadStatus.DOWNLOADING
             if d["status"] == "finished":
                 status = DownloadStatus.PROCESSING
@@ -378,6 +453,13 @@ class Downloader:
                 mins, secs = divmod(int(eta), 60)
                 eta_str = f"{mins}:{secs:02d}"
 
+            if _is_cancelled():
+                _notify_cancel(progress, d.get("filename", ""))
+                raise DownloadCancelled()
+
+            if progress_callback is None:
+                return
+
             progress_callback(DownloadProgress(
                 status=status,
                 title=current_title[0],
@@ -389,14 +471,18 @@ class Downloader:
 
         opts["progress_hooks"] = [progress_hook]
 
+        def match_filter(info, incomplete=False):
+            _maybe_set_title(info)
+            if _is_cancelled():
+                _notify_cancel(0.0)
+                raise DownloadCancelled()
+            return None
+
+        opts["match_filter"] = match_filter
+
         try:
             # Reduced debug output for better performance
             with yt_dlp.YoutubeDL(opts) as ydl:
-                # Get title first
-                info = ydl.extract_info(url, download=False)
-                if info:
-                    current_title[0] = info.get("title", "Unknown")
-
                 if progress_callback:
                     progress_callback(DownloadProgress(
                         status=DownloadStatus.PENDING,
@@ -421,15 +507,34 @@ class Downloader:
 
                 return True
 
+        except DownloadCancelled:
+            if progress_callback:
+                progress_callback(DownloadProgress(
+                    status=DownloadStatus.CANCELLED,
+                    title=current_title[0],
+                    progress=0.0,
+                    speed="",
+                    eta="",
+                    filename="",
+                    error="Download cancelled.",
+                ))
+            return False
         except Exception as e:
             error_msg = str(e)
             error_type = type(e).__name__
-            
-            # Only print errors to console (reduced verbosity)
-            # Full traceback only for unexpected errors
-            if "Video unavailable" not in error_msg and "not available" not in error_msg.lower():
+            # Known YouTube/yt-dlp errors: do not print full traceback (reduces console spam)
+            known_error = (
+                "Video unavailable" in error_msg
+                or "not available" in error_msg.lower()
+                or "rate-limited" in error_msg
+                or "403" in error_msg
+                or "401" in error_msg
+                or "Forbidden" in error_msg
+                or error_type in ("ExtractorError", "DownloadError")
+            )
+            print(f"[ERROR] Download failed: {error_type}: {error_msg}")
+            if not known_error:
                 import traceback
-                print(f"[ERROR] Download failed: {error_type}: {error_msg}")
                 traceback.print_exc()
             
             # If format error, try with a simpler fallback format
@@ -451,6 +556,7 @@ class Downloader:
                             fallback_opts["merge_output_format"] = format_type
                     
                     fallback_opts["progress_hooks"] = [progress_hook]
+                    fallback_opts["match_filter"] = match_filter
                     
                     print(f"[DEBUG] Retrying with fallback format...")
                     # Don't suppress stderr for fallback either

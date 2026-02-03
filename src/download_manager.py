@@ -10,6 +10,7 @@ from typing import Callable, Dict, List, Optional, Set
 from enum import Enum
 
 from .downloader import Downloader, DownloadProgress, DownloadStatus
+from yt_dlp.utils import DownloadCancelled
 
 
 class TaskStatus(Enum):
@@ -133,10 +134,6 @@ class DownloadManager:
         
         # Create progress callback for this task
         def progress_callback(progress: DownloadProgress) -> None:
-            # Check for cancellation
-            if self._cancel_flags.get(task.task_id, threading.Event()).is_set():
-                raise Exception("Download cancelled")
-            
             with self._lock:
                 task.progress = progress.progress
                 task.speed = progress.speed
@@ -147,6 +144,9 @@ class DownloadManager:
                     task.progress = 100.0
                 elif progress.status == DownloadStatus.FAILED:
                     task.status = TaskStatus.FAILED
+                    task.error = progress.error
+                elif progress.status == DownloadStatus.CANCELLED:
+                    task.status = TaskStatus.CANCELLED
                     task.error = progress.error
             
             self._notify_task_update(task)
@@ -159,6 +159,7 @@ class DownloadManager:
                 quality=task.quality,
                 progress_callback=progress_callback,
                 playlist_title=task.playlist_title,
+                cancel_event=self._cancel_flags.get(task.task_id),
             )
             
             with self._lock:
@@ -166,10 +167,17 @@ class DownloadManager:
                     task.status = TaskStatus.COMPLETED
                     task.progress = 100.0
                 else:
-                    task.status = TaskStatus.FAILED
+                    if self._cancel_flags.get(task.task_id, threading.Event()).is_set():
+                        task.status = TaskStatus.CANCELLED
+                    else:
+                        task.status = TaskStatus.FAILED
                     
             return success
             
+        except DownloadCancelled:
+            with self._lock:
+                task.status = TaskStatus.CANCELLED
+            return False
         except Exception as e:
             with self._lock:
                 if self._cancel_flags.get(task.task_id, threading.Event()).is_set():
@@ -274,33 +282,57 @@ class DownloadManager:
     
     def cancel_all(self) -> None:
         """Cancel all pending and active downloads."""
+        tasks_to_notify: List[DownloadTask] = []
         with self._lock:
             # Set cancel flags
             for flag in self._cancel_flags.values():
                 flag.set()
-            
+
+            # Try cancelling queued futures
+            for task_id, future in self._futures.items():
+                if future.cancel():
+                    task = self._tasks.get(task_id)
+                    if task and task.status == TaskStatus.QUEUED:
+                        task.status = TaskStatus.CANCELLED
+                        tasks_to_notify.append(task)
+
             # Update task statuses
             for task in self._tasks.values():
                 if task.status in (TaskStatus.QUEUED, TaskStatus.ACTIVE):
                     task.status = TaskStatus.CANCELLED
-        
+                    tasks_to_notify.append(task)
+
+            self._is_running = False
+
         # Shutdown executor
         if self._executor:
             self._executor.shutdown(wait=False)
             self._executor = None
-        
-        self._is_running = False
+
+        for task in tasks_to_notify:
+            self._notify_task_update(task)
+        self._notify_aggregate_update()
     
     def cancel_task(self, task_id: str) -> None:
         """Cancel a specific task."""
+        task_to_notify: Optional[DownloadTask] = None
         with self._lock:
             if task_id in self._cancel_flags:
                 self._cancel_flags[task_id].set()
-            
+
+            future = self._futures.get(task_id)
+            if future:
+                future.cancel()
+
             if task_id in self._tasks:
                 task = self._tasks[task_id]
                 if task.status in (TaskStatus.QUEUED, TaskStatus.ACTIVE):
                     task.status = TaskStatus.CANCELLED
+                    task_to_notify = task
+
+        if task_to_notify:
+            self._notify_task_update(task_to_notify)
+            self._notify_aggregate_update()
     
     def is_running(self) -> bool:
         """Check if downloads are in progress."""

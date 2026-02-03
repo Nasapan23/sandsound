@@ -80,6 +80,11 @@ SandSound is a modern, open-source desktop application for downloading YouTube v
 - **FFmpeg** (for audio/video conversion)
   - Can be installed system-wide or configured in app settings
 - **Operating System**: Windows, Linux, or macOS
+- **Deno (optional, recommended for YouTube)**  
+  - Recent yt-dlp versions use a JavaScript runtime for full YouTube support. Installing Deno reduces "No supported JavaScript runtime" warnings and can avoid 403/signature issues.  
+  - **Windows**: `winget install --id=DenoLand.Deno`  
+  - **Linux/macOS**: See [deno.land](https://deno.land) or your package manager.  
+  - If Deno is on your PATH, yt-dlp will use it automatically.
 
 ## Installation
 
@@ -187,6 +192,7 @@ All settings are stored in `~/.sandsound/` (or `%USERPROFILE%\.sandsound\` on Wi
 - Check your internet connection
 - Some videos may require cookies for authentication (add in Settings)
 - Try a different format or quality setting
+- If you see "No supported JavaScript runtime" or 403/rate-limit errors: install Deno (see [Requirements](#requirements)) and/or reduce concurrent downloads in Settings to avoid YouTube rate limiting
 
 **Playlist button doesn't appear**
 - Ensure the URL is a valid YouTube playlist

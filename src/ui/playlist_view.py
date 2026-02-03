@@ -19,6 +19,7 @@ class VideoStatus(Enum):
     COMPLETED = "completed"
     SKIPPED = "skipped"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 @dataclass  
@@ -152,7 +153,8 @@ class PlaylistTableRow(ctk.CTkFrame):
             VideoStatus.PROCESSING: "Processing...",
             VideoStatus.COMPLETED: "Done",
             VideoStatus.SKIPPED: "Skipped",
-            VideoStatus.FAILED: "Failed"
+            VideoStatus.FAILED: "Failed",
+            VideoStatus.CANCELLED: "Cancelled"
         }
         if self._video.is_downloaded and self._video.status == VideoStatus.PENDING:
             return "Downloaded"
@@ -166,7 +168,8 @@ class PlaylistTableRow(ctk.CTkFrame):
             VideoStatus.PROCESSING: Colors.ACCENT_LIGHT,
             VideoStatus.COMPLETED: Colors.SUCCESS,
             VideoStatus.SKIPPED: Colors.TEXT_MUTED,
-            VideoStatus.FAILED: Colors.ERROR
+            VideoStatus.FAILED: Colors.ERROR,
+            VideoStatus.CANCELLED: Colors.WARNING
         }
         if self._video.is_downloaded and self._video.status == VideoStatus.PENDING:
             return Colors.SUCCESS
@@ -467,6 +470,7 @@ class PlaylistViewDialog(ctk.CTkToplevel):
         playlist_id: str,
         videos: List[PlaylistVideo],
         on_download: Callable[[List[str], bool], None],
+        on_cancel: Optional[Callable[[], None]] = None,
         **kwargs
     ) -> None:
         super().__init__(master, **kwargs)
@@ -474,7 +478,9 @@ class PlaylistViewDialog(ctk.CTkToplevel):
         self._playlist_id = playlist_id
         self._videos = videos
         self._on_download = on_download
+        self._on_cancel = on_cancel
         self._compare_download = True  # Default: skip already downloaded
+        self._is_downloading = False
         
         # Window setup
         self.title(f"Playlist: {playlist_title}")
@@ -647,9 +653,18 @@ class PlaylistViewDialog(ctk.CTkToplevel):
             hover_color=Colors.BG_CARD_HOVER,
             text_color=Colors.TEXT_PRIMARY,
             corner_radius=10,
-            command=self.destroy
+            command=self._handle_cancel
         )
         self._cancel_btn.pack(side="right", padx=(0, 12))
+
+    def _handle_cancel(self) -> None:
+        """Handle cancel/close based on download state."""
+        if self._is_downloading:
+            self._cancel_btn.configure(text="Cancelling...", state="disabled")
+            if self._on_cancel:
+                self._on_cancel()
+        else:
+            self.destroy()
     
     def _update_stats_label(self) -> None:
         """Update stats label with accurate count."""
@@ -706,17 +721,18 @@ class PlaylistViewDialog(ctk.CTkToplevel):
     
     def set_downloading(self, is_downloading: bool) -> None:
         """Set UI state during download."""
+        self._is_downloading = is_downloading
         if is_downloading:
             self._download_btn.configure(
                 text="Downloading...",
                 state="disabled",
                 fg_color=Colors.BG_INPUT
             )
-            self._cancel_btn.configure(text="Cancel Download")
+            self._cancel_btn.configure(text="Cancel Download", state="normal")
         else:
             self._download_btn.configure(
                 text="Download Selected",
                 state="normal",
                 fg_color=Colors.PRIMARY
             )
-            self._cancel_btn.configure(text="Close")
+            self._cancel_btn.configure(text="Close", state="normal")
