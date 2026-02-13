@@ -54,10 +54,14 @@ class SandSoundApp(ctk.CTk):
         self._playlist_fetch_in_progress = False
         self._playlist_dialog: Optional[PlaylistViewDialog] = None
         self._entries_map: dict = {}  # For tracking entries during concurrent download
+        self._last_validated_url: str = ""
+        self._last_validation_time: float = 0.0
         
         # UI update throttling
         self._progress_queue = queue.Queue(maxsize=10)
-        self._task_update_queue = queue.Queue(maxsize=20)
+        # Use per-task buffer to avoid dropping updates during bursts
+        self._task_update_buffer: dict = {}
+        self._task_buffer_lock = threading.Lock()
         self._aggregate_update_queue = queue.Queue(maxsize=5)
         self._last_progress_update = 0.0
         self._last_task_update = 0.0
@@ -66,7 +70,6 @@ class SandSoundApp(ctk.CTk):
         self._task_update_interval = 0.15  # Update task UI max every 150ms
         self._aggregate_update_interval = 0.2  # Update aggregate UI max every 200ms
         self._pending_progress: Optional[DownloadProgress] = None
-        self._pending_task_update: Optional[tuple] = None
         self._pending_aggregate_update: Optional[AggregateProgress] = None
 
         self._setup_window()
@@ -284,6 +287,15 @@ class SandSoundApp(ctk.CTk):
     def _on_url_validate(self, url: str) -> bool:
         """Validate URL and fetch info if playlist."""
         is_valid = Downloader.is_valid_url(url)
+        now = time.time()
+        
+        # Debounce repeated validations for the same URL to avoid spawning multiple info fetch threads
+        if is_valid and url == self._last_validated_url and (now - self._last_validation_time) < 1.0:
+            return True
+        
+        if is_valid:
+            self._last_validated_url = url
+            self._last_validation_time = now
         
         if is_valid:
             # Show playlist bar immediately for playlist URLs
@@ -506,6 +518,11 @@ class SandSoundApp(ctk.CTk):
             if self._playlist_dialog:
                 self._playlist_dialog.set_downloading(False)
             return
+        
+        # Reset update buffers for a clean UI state
+        with self._task_buffer_lock:
+            self._task_update_buffer.clear()
+        self._pending_aggregate_update = None
         
         self._is_downloading = True
         if self._playlist_dialog:
@@ -783,23 +800,27 @@ class SandSoundApp(ctk.CTk):
         
         # Process task updates
         if current_time - self._last_task_update >= self._task_update_interval:
-            latest_task = None
-            while True:
-                try:
-                    latest_task = self._task_update_queue.get_nowait()
-                except queue.Empty:
-                    break
+            buffered_updates = []
+            with self._task_buffer_lock:
+                if self._task_update_buffer:
+                    # Sort by time inserted to preserve ordering
+                    buffered_updates = sorted(
+                        self._task_update_buffer.values(),
+                        key=lambda item: item[2]
+                    )
+                    # Keep any overflow for next cycle (process max 30 per tick)
+                    remaining = buffered_updates[30:]
+                    buffered_updates = buffered_updates[:30]
+                    self._task_update_buffer = {
+                        task.task_id: (task, info, ts)
+                        for task, info, ts in remaining
+                    }
             
-            if latest_task:
-                task, info = latest_task
-                self._on_task_update(task, info)
+            if buffered_updates:
+                for task, info, _ in buffered_updates:
+                    self._on_task_update(task, info)
                 self._last_task_update = current_time
-            elif self._pending_task_update:
-                task, info = self._pending_task_update
-                self._on_task_update(task, info)
-                self._pending_task_update = None
-                self._last_task_update = current_time
-        
+    
         # Process aggregate updates
         if current_time - self._last_aggregate_update >= self._aggregate_update_interval:
             latest_aggregate = None
@@ -823,13 +844,9 @@ class SandSoundApp(ctk.CTk):
     def _queue_task_update(self, task: DownloadTask, info: VideoInfo) -> None:
         """Queue task update for throttled processing."""
         current_time = time.time()
-        if current_time - self._last_task_update >= self._task_update_interval:
-            try:
-                self._task_update_queue.put_nowait((task, info))
-            except queue.Full:
-                self._pending_task_update = (task, info)
-        else:
-            self._pending_task_update = (task, info)
+        with self._task_buffer_lock:
+            # Keep only the latest update per task to avoid unbounded growth
+            self._task_update_buffer[task.task_id] = (task, info, current_time)
     
     def _queue_aggregate_update(self, aggregate: AggregateProgress) -> None:
         """Queue aggregate update for throttled processing."""

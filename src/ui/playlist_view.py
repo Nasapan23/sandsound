@@ -253,9 +253,9 @@ class PlaylistTable(ctk.CTkScrollableFrame):
     """Scrollable table displaying playlist videos with lazy loading."""
     
     # Batch size for progressive rendering (optimized for large playlists)
-    INITIAL_BATCH_SIZE = 30  # Render first 30 quickly
-    SUBSEQUENT_BATCH_SIZE = 15  # Smaller batches for smoother rendering
-    BATCH_DELAY_MS = 50  # Increased delay to prevent UI blocking
+    INITIAL_BATCH_SIZE = 20  # Render first 20 quickly to show content faster
+    SUBSEQUENT_BATCH_SIZE = 10  # Smaller batches for smoother rendering
+    BATCH_DELAY_MS = 35  # Shorter delay keeps UI responsive without overwhelming it
     
     def __init__(
         self,
