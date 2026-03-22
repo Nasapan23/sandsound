@@ -10,6 +10,7 @@ from typing import Callable, Dict, List, Optional, Set
 from enum import Enum
 
 from .downloader import Downloader, DownloadProgress, DownloadStatus
+from yt_dlp.utils import DownloadCancelled
 
 
 class TaskStatus(Enum):
@@ -99,8 +100,17 @@ class DownloadManager:
             tasks: List of download tasks to queue
         """
         with self._lock:
+            if self._is_running:
+                raise RuntimeError("Download manager is already running")
+            self._shutdown_executor_locked(wait=False, cancel_futures=True)
+            self._tasks = {}
+            self._futures = {}
+            self._cancel_flags = {}
             self._is_running = True
-            self._executor = ThreadPoolExecutor(max_workers=self._max_workers)
+            self._executor = ThreadPoolExecutor(
+                max_workers=self._max_workers,
+                thread_name_prefix="SandSoundDownload",
+            )
             
             for task in tasks:
                 self._tasks[task.task_id] = task
@@ -133,10 +143,6 @@ class DownloadManager:
         
         # Create progress callback for this task
         def progress_callback(progress: DownloadProgress) -> None:
-            # Check for cancellation
-            if self._cancel_flags.get(task.task_id, threading.Event()).is_set():
-                raise Exception("Download cancelled")
-            
             with self._lock:
                 task.progress = progress.progress
                 task.speed = progress.speed
@@ -147,6 +153,9 @@ class DownloadManager:
                     task.progress = 100.0
                 elif progress.status == DownloadStatus.FAILED:
                     task.status = TaskStatus.FAILED
+                    task.error = progress.error
+                elif progress.status == DownloadStatus.CANCELLED:
+                    task.status = TaskStatus.CANCELLED
                     task.error = progress.error
             
             self._notify_task_update(task)
@@ -159,6 +168,7 @@ class DownloadManager:
                 quality=task.quality,
                 progress_callback=progress_callback,
                 playlist_title=task.playlist_title,
+                cancel_event=self._cancel_flags.get(task.task_id),
             )
             
             with self._lock:
@@ -166,10 +176,17 @@ class DownloadManager:
                     task.status = TaskStatus.COMPLETED
                     task.progress = 100.0
                 else:
-                    task.status = TaskStatus.FAILED
+                    if self._cancel_flags.get(task.task_id, threading.Event()).is_set():
+                        task.status = TaskStatus.CANCELLED
+                    else:
+                        task.status = TaskStatus.FAILED
                     
             return success
             
+        except DownloadCancelled:
+            with self._lock:
+                task.status = TaskStatus.CANCELLED
+            return False
         except Exception as e:
             with self._lock:
                 if self._cancel_flags.get(task.task_id, threading.Event()).is_set():
@@ -190,9 +207,11 @@ class DownloadManager:
                 t.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED)
                 for t in self._tasks.values()
             )
+            if all_done:
+                self._is_running = False
+                self._shutdown_executor_locked(wait=False, cancel_futures=False)
         
         if all_done:
-            self._is_running = False
             if self._on_batch_complete:
                 self._on_batch_complete()
     
@@ -274,33 +293,55 @@ class DownloadManager:
     
     def cancel_all(self) -> None:
         """Cancel all pending and active downloads."""
+        tasks_to_notify: List[DownloadTask] = []
         with self._lock:
             # Set cancel flags
             for flag in self._cancel_flags.values():
                 flag.set()
-            
+
+            # Try cancelling queued futures
+            for task_id, future in self._futures.items():
+                if future.cancel():
+                    task = self._tasks.get(task_id)
+                    if task and task.status == TaskStatus.QUEUED:
+                        task.status = TaskStatus.CANCELLED
+                        tasks_to_notify.append(task)
+
             # Update task statuses
             for task in self._tasks.values():
                 if task.status in (TaskStatus.QUEUED, TaskStatus.ACTIVE):
                     task.status = TaskStatus.CANCELLED
-        
+                    tasks_to_notify.append(task)
+
+            self._is_running = False
+
         # Shutdown executor
-        if self._executor:
-            self._executor.shutdown(wait=False)
-            self._executor = None
-        
-        self._is_running = False
+        self._shutdown_executor(wait=False, cancel_futures=True)
+
+        for task in tasks_to_notify:
+            self._notify_task_update(task)
+        self._notify_aggregate_update()
     
     def cancel_task(self, task_id: str) -> None:
         """Cancel a specific task."""
+        task_to_notify: Optional[DownloadTask] = None
         with self._lock:
             if task_id in self._cancel_flags:
                 self._cancel_flags[task_id].set()
-            
+
+            future = self._futures.get(task_id)
+            if future:
+                future.cancel()
+
             if task_id in self._tasks:
                 task = self._tasks[task_id]
                 if task.status in (TaskStatus.QUEUED, TaskStatus.ACTIVE):
                     task.status = TaskStatus.CANCELLED
+                    task_to_notify = task
+
+        if task_to_notify:
+            self._notify_task_update(task_to_notify)
+            self._notify_aggregate_update()
     
     def is_running(self) -> bool:
         """Check if downloads are in progress."""
@@ -325,3 +366,20 @@ class DownloadManager:
             self._tasks.clear()
             self._futures.clear()
             self._cancel_flags.clear()
+
+    def close(self) -> None:
+        """Release executor resources."""
+        self.clear()
+
+    def _shutdown_executor(self, *, wait: bool, cancel_futures: bool) -> None:
+        """Shut down the current executor safely."""
+        with self._lock:
+            self._shutdown_executor_locked(wait=wait, cancel_futures=cancel_futures)
+
+    def _shutdown_executor_locked(self, *, wait: bool, cancel_futures: bool) -> None:
+        """Shut down the executor while the manager lock is already held."""
+        if self._executor is None:
+            return
+        executor = self._executor
+        self._executor = None
+        executor.shutdown(wait=wait, cancel_futures=cancel_futures)

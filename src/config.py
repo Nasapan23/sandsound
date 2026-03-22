@@ -13,6 +13,9 @@ from typing import Any, Optional
 class Config:
     """Manages application configuration with JSON persistence."""
 
+    MIN_CONCURRENT_DOWNLOADS = 1
+    MAX_CONCURRENT_DOWNLOADS = 8
+
     DEFAULT_CONFIG = {
         "download_dir": str(Path.home() / "Downloads" / "SandSound"),
         "cookie_file": "",
@@ -150,6 +153,26 @@ class Config:
     def theme(self, value: str) -> None:
         """Set UI theme."""
         self.set("theme", value)
+
+    @property
+    def concurrent_downloads(self) -> int:
+        """Get bounded concurrent download count."""
+        raw_value = self._config.get("concurrent_downloads", self.DEFAULT_CONFIG["concurrent_downloads"])
+        try:
+            parsed = int(raw_value)
+        except (TypeError, ValueError):
+            parsed = self.DEFAULT_CONFIG["concurrent_downloads"]
+        return min(max(parsed, self.MIN_CONCURRENT_DOWNLOADS), self.MAX_CONCURRENT_DOWNLOADS)
+
+    @concurrent_downloads.setter
+    def concurrent_downloads(self, value: int) -> None:
+        """Set concurrent download count within supported bounds."""
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            parsed = self.DEFAULT_CONFIG["concurrent_downloads"]
+        bounded = min(max(parsed, self.MIN_CONCURRENT_DOWNLOADS), self.MAX_CONCURRENT_DOWNLOADS)
+        self.set("concurrent_downloads", bounded)
 
     def is_cookie_valid(self) -> bool:
         """Check if configured cookie file exists, is readable, and valid."""

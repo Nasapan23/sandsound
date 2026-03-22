@@ -19,6 +19,7 @@ class VideoStatus(Enum):
     COMPLETED = "completed"
     SKIPPED = "skipped"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 @dataclass  
@@ -150,12 +151,13 @@ class PlaylistTableRow(ctk.CTkFrame):
             VideoStatus.PENDING: "Pending",
             VideoStatus.DOWNLOADING: "Downloading...",
             VideoStatus.PROCESSING: "Processing...",
-            VideoStatus.COMPLETED: "✓ Done",
+            VideoStatus.COMPLETED: "Done",
             VideoStatus.SKIPPED: "Skipped",
-            VideoStatus.FAILED: "✗ Failed"
+            VideoStatus.FAILED: "Failed",
+            VideoStatus.CANCELLED: "Cancelled"
         }
         if self._video.is_downloaded and self._video.status == VideoStatus.PENDING:
-            return "✓ Downloaded"
+            return "Downloaded"
         return status_map.get(self._video.status, "Pending")
     
     def _get_status_color(self) -> str:
@@ -166,7 +168,8 @@ class PlaylistTableRow(ctk.CTkFrame):
             VideoStatus.PROCESSING: Colors.ACCENT_LIGHT,
             VideoStatus.COMPLETED: Colors.SUCCESS,
             VideoStatus.SKIPPED: Colors.TEXT_MUTED,
-            VideoStatus.FAILED: Colors.ERROR
+            VideoStatus.FAILED: Colors.ERROR,
+            VideoStatus.CANCELLED: Colors.WARNING
         }
         if self._video.is_downloaded and self._video.status == VideoStatus.PENDING:
             return Colors.SUCCESS
@@ -250,9 +253,9 @@ class PlaylistTable(ctk.CTkScrollableFrame):
     """Scrollable table displaying playlist videos with lazy loading."""
     
     # Batch size for progressive rendering (optimized for large playlists)
-    INITIAL_BATCH_SIZE = 30  # Render first 30 quickly
-    SUBSEQUENT_BATCH_SIZE = 15  # Smaller batches for smoother rendering
-    BATCH_DELAY_MS = 50  # Increased delay to prevent UI blocking
+    INITIAL_BATCH_SIZE = 20  # Render first 20 quickly to show content faster
+    SUBSEQUENT_BATCH_SIZE = 10  # Smaller batches for smoother rendering
+    BATCH_DELAY_MS = 35  # Shorter delay keeps UI responsive without overwhelming it
     
     def __init__(
         self,
@@ -272,6 +275,7 @@ class PlaylistTable(ctk.CTkScrollableFrame):
         self._rows: Dict[str, PlaylistTableRow] = {}
         self._on_selection_change = on_selection_change
         self._selection_state: Dict[str, bool] = {}  # Track selection even for unrendered rows
+        self._selected_count = 0
         self._render_index = 0
         self._is_rendering = False
         
@@ -281,6 +285,7 @@ class PlaylistTable(ctk.CTkScrollableFrame):
             video.video_id: not video.is_downloaded 
             for video in videos
         }
+        self._selected_count = sum(1 for selected in self._selection_state.values() if selected)
         
         # Header row
         header = ctk.CTkFrame(self, fg_color=Colors.BG_CARD_HOVER, height=40)
@@ -382,15 +387,16 @@ class PlaylistTable(ctk.CTkScrollableFrame):
     
     def _on_row_toggle(self, video_id: str, selected: bool) -> None:
         """Handle row selection toggle."""
-        # Update selection state
+        previous = self._selection_state.get(video_id, False)
         self._selection_state[video_id] = selected
+        if previous != selected:
+            self._selected_count += 1 if selected else -1
         if self._on_selection_change:
-            self._on_selection_change(self.get_selected_count())
+            self._on_selection_change(self._selected_count)
     
     def get_selected_count(self) -> int:
         """Get count of selected videos."""
-        # Use selection state to include unrendered rows
-        return sum(1 for selected in self._selection_state.values() if selected)
+        return self._selected_count
     
     def get_selected_ids(self) -> List[str]:
         """Get list of selected video IDs."""
@@ -399,37 +405,39 @@ class PlaylistTable(ctk.CTkScrollableFrame):
     
     def select_all(self) -> None:
         """Select all videos."""
-        # Update selection state for all
         for video in self._videos:
             self._selection_state[video.video_id] = True
-        # Update rendered rows
+        self._selected_count = len(self._videos)
         for row in self._rows.values():
             row.set_selected(True)
         if self._on_selection_change:
-            self._on_selection_change(len(self._videos))
+            self._on_selection_change(self._selected_count)
     
     def deselect_all(self) -> None:
         """Deselect all videos."""
-        # Update selection state for all
         for video in self._videos:
             self._selection_state[video.video_id] = False
-        # Update rendered rows
+        self._selected_count = 0
         for row in self._rows.values():
             row.set_selected(False)
         if self._on_selection_change:
-            self._on_selection_change(0)
+            self._on_selection_change(self._selected_count)
     
     def select_new_only(self) -> None:
         """Select only videos that haven't been downloaded."""
+        selected_count = 0
         for video in self._videos:
             selected = not video.is_downloaded
             self._selection_state[video.video_id] = selected
+            if selected:
+                selected_count += 1
             # Update rendered row if it exists
             row = self._rows.get(video.video_id)
             if row:
                 row.set_selected(selected)
+        self._selected_count = selected_count
         if self._on_selection_change:
-            self._on_selection_change(self.get_selected_count())
+            self._on_selection_change(self._selected_count)
     
     def update_video_status(
         self,
@@ -467,6 +475,7 @@ class PlaylistViewDialog(ctk.CTkToplevel):
         playlist_id: str,
         videos: List[PlaylistVideo],
         on_download: Callable[[List[str], bool], None],
+        on_cancel: Optional[Callable[[], None]] = None,
         **kwargs
     ) -> None:
         super().__init__(master, **kwargs)
@@ -474,7 +483,9 @@ class PlaylistViewDialog(ctk.CTkToplevel):
         self._playlist_id = playlist_id
         self._videos = videos
         self._on_download = on_download
+        self._on_cancel = on_cancel
         self._compare_download = True  # Default: skip already downloaded
+        self._is_downloading = False
         
         # Window setup
         self.title(f"Playlist: {playlist_title}")
@@ -647,9 +658,18 @@ class PlaylistViewDialog(ctk.CTkToplevel):
             hover_color=Colors.BG_CARD_HOVER,
             text_color=Colors.TEXT_PRIMARY,
             corner_radius=10,
-            command=self.destroy
+            command=self._handle_cancel
         )
         self._cancel_btn.pack(side="right", padx=(0, 12))
+
+    def _handle_cancel(self) -> None:
+        """Handle cancel/close based on download state."""
+        if self._is_downloading:
+            self._cancel_btn.configure(text="Cancelling...", state="disabled")
+            if self._on_cancel:
+                self._on_cancel()
+        else:
+            self.destroy()
     
     def _update_stats_label(self) -> None:
         """Update stats label with accurate count."""
@@ -706,17 +726,18 @@ class PlaylistViewDialog(ctk.CTkToplevel):
     
     def set_downloading(self, is_downloading: bool) -> None:
         """Set UI state during download."""
+        self._is_downloading = is_downloading
         if is_downloading:
             self._download_btn.configure(
                 text="Downloading...",
                 state="disabled",
                 fg_color=Colors.BG_INPUT
             )
-            self._cancel_btn.configure(text="Cancel Download")
+            self._cancel_btn.configure(text="Cancel Download", state="normal")
         else:
             self._download_btn.configure(
                 text="Download Selected",
                 state="normal",
                 fg_color=Colors.PRIMARY
             )
-            self._cancel_btn.configure(text="Close")
+            self._cancel_btn.configure(text="Close", state="normal")

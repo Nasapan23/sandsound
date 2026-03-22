@@ -1,4 +1,4 @@
-# SandSound 🎵
+# SandSound
 
 <div align="center">
 
@@ -10,6 +10,8 @@
 **A modern, open-source YouTube downloader for audio, music, and video downloads**
 
 Perfect for musicians, content creators, and anyone who needs a reliable YouTube downloader.
+
+> **Note**: SandSound is a GUI wrapper built on top of [yt-dlp](https://github.com/yt-dlp/yt-dlp), adding features like download history tracking, playlist management, smart re-download detection, and a modern desktop interface. All core downloading functionality is powered by yt-dlp.
 
 [Features](#-features) • [Installation](#-installation) • [Usage](#-usage) • [Contributing](#-contributing) • [License](#-license)
 
@@ -25,7 +27,7 @@ Perfect for musicians, content creators, and anyone who needs a reliable YouTube
 
 ---
 
-## 🚀 Overview
+## Overview
 
 SandSound is a modern, open-source desktop application for downloading YouTube videos and audio. Perfect for musicians, content creators, and anyone who needs to download YouTube content. Built with Python and CustomTkinter, it provides a clean, intuitive interface that makes downloading content simple and enjoyable.
 
@@ -44,24 +46,24 @@ SandSound is a modern, open-source desktop application for downloading YouTube v
 - **Cross-Platform** - Works on Windows, Linux, and macOS
 - **Open Source** - Free, open-source, and community-driven
 
-## ✨ Features
+## Features
 
 ### Core Functionality
-- 🎬 **Audio & Video Downloads** - Support for MP3, M4A, OPUS, FLAC, WAV, MP4, WebM, MKV
-- 📋 **Playlist Support** - Visual table view showing each video with download status
-- 🔄 **Smart Re-download** - Automatically detects and downloads only new videos from playlists
-- 🍪 **Cookie Authentication** - Paste cookies directly for accessing age-restricted content
-- 📊 **Download History** - Persistent tracking of downloaded content with playlist management
-- ⚡ **Concurrent Downloads** - Download up to 4 files simultaneously for faster processing
+- **Audio & Video Downloads** - Support for MP3, M4A, OPUS, FLAC, WAV, MP4, WebM, MKV
+- **Playlist Support** - Visual table view showing each video with download status
+- **Smart Re-download** - Automatically detects and downloads only new videos from playlists
+- **Cookie Authentication** - Paste cookies directly for accessing age-restricted content
+- **Download History** - Persistent SQLite tracking of downloaded content with playlist management
+- **Concurrent Downloads** - Download up to 4 files simultaneously for faster processing
 
 ### User Experience
-- 🎨 **Modern Dark UI** - Clean, premium design built with CustomTkinter
-- 📱 **Intuitive Interface** - Easy-to-use controls with clear visual feedback
-- 🔍 **Format Selection** - Choose from multiple audio/video formats and quality settings
-- 📈 **Progress Tracking** - Real-time progress updates with speed and ETA information
-- ⚙️ **Customizable Settings** - Configure download directory, FFmpeg path, and more
+- **Modern Dark UI** - Clean, premium design built with CustomTkinter
+- **Intuitive Interface** - Easy-to-use controls with clear visual feedback
+- **Format Selection** - Choose from multiple audio/video formats and quality settings
+- **Progress Tracking** - Real-time progress updates with speed and ETA information
+- **Customizable Settings** - Configure download directory, FFmpeg path, and more
 
-## 📸 Screenshots
+## Screenshots
 
 ### Main Interface
 ![Main Interface](SS_Main.png)
@@ -72,14 +74,19 @@ SandSound is a modern, open-source desktop application for downloading YouTube v
 ### Download History
 ![Download History](SS_History.png)
 
-## 📋 Requirements
+## Requirements
 
 - **Python** 3.10 or higher
 - **FFmpeg** (for audio/video conversion)
   - Can be installed system-wide or configured in app settings
 - **Operating System**: Windows, Linux, or macOS
+- **Deno (optional, recommended for YouTube)**  
+  - Recent yt-dlp versions use a JavaScript runtime for full YouTube support. Installing Deno reduces "No supported JavaScript runtime" warnings and can avoid 403/signature issues.  
+  - **Windows**: `winget install --id=DenoLand.Deno`  
+  - **Linux/macOS**: See [deno.land](https://deno.land) or your package manager.  
+  - If Deno is on your PATH, yt-dlp will use it automatically.
 
-## 🛠️ Installation
+## Installation
 
 ### Option 1: Pre-built Executable (Windows)
 
@@ -141,7 +148,7 @@ FFmpeg is required for audio conversion. You have two options:
    - Open SandSound Settings
    - Point to the FFmpeg executable location
 
-## 🎯 Usage
+## Usage
 
 ### Basic Usage
 
@@ -164,17 +171,21 @@ Access settings via the Settings button in the top-right:
 - Configure download directory
 - Set FFmpeg path
 - Manage cookie file
+- Adjust concurrent downloads for playlist performance
 - Adjust theme preferences
 
-## 📁 Configuration
+## Configuration
 
-All settings are stored in `~/.sandsound/` (or `%USERPROFILE%\.sandsound\` on Windows):
+SandSound stores its local data in `~/.sandsound/` (or `%USERPROFILE%\.sandsound\` on Windows):
 
 - `config.json` - Application settings (download directory, theme, etc.)
 - `cookies.txt` - YouTube cookies for authentication
-- `download_history.json` - Download history for smart re-downloads
+- `sandsound.db` - Auto-created SQLite database for download history and metadata cache
+- `download_history.json.bak` - Preserved backup created automatically after first-run migration from older JSON history files
 
-## 🐛 Troubleshooting
+Playlist and video metadata is cached in the same SQLite database so playlist detection and reopen flows are faster. Fresh playlist checks still force a live refresh before comparing for new videos.
+
+## Troubleshooting
 
 ### Common Issues
 
@@ -185,6 +196,7 @@ All settings are stored in `~/.sandsound/` (or `%USERPROFILE%\.sandsound\` on Wi
 - Check your internet connection
 - Some videos may require cookies for authentication (add in Settings)
 - Try a different format or quality setting
+- If you see "No supported JavaScript runtime" or 403/rate-limit errors: install Deno (see [Requirements](#requirements)) and/or reduce concurrent downloads in Settings to avoid YouTube rate limiting
 
 **Playlist button doesn't appear**
 - Ensure the URL is a valid YouTube playlist
@@ -201,23 +213,23 @@ All settings are stored in `~/.sandsound/` (or `%USERPROFILE%\.sandsound\` on Wi
 - Create a new [Issue](https://github.com/Nasapan23/sandsound/issues/new) with details
 - Review the [Contributing Guide](CONTRIBUTING.md) for development help
 
-## 🗺️ Roadmap
+## Roadmap
 
 ### Planned Features
-- 🖼️ Thumbnail embedding in audio files
-- 🔊 Audio normalization
-- ⏰ Scheduled downloads
-- 🌐 Multi-language support
-- 📱 System tray integration
-- 🔔 Download notifications
+- Thumbnail embedding in audio files
+- Audio normalization
+- Scheduled downloads
+- Multi-language support
+- System tray integration
+- Download notifications
 
 ### Completed Features
-- ✅ Concurrent downloads
-- ✅ Download queue management
-- ✅ Playlist history tracking
-- ✅ Smart re-download detection
+- Concurrent downloads
+- Download queue management
+- Playlist history tracking
+- Smart re-download detection
 
-## 🤝 Contributing
+## Contributing
 
 We welcome contributions! SandSound is an open-source project, and we appreciate any help you can provide.
 
@@ -239,23 +251,23 @@ Please read our [Contributing Guide](CONTRIBUTING.md) for details on:
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for more details.
 
-## 📄 License
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - **[yt-dlp](https://github.com/yt-dlp/yt-dlp)** - The powerful YouTube downloader library that makes this possible
 - **[CustomTkinter](https://github.com/TomSchimansky/CustomTkinter)** - Beautiful modern UI components
 - **[Pillow](https://python-pillow.org/)** - Image processing support
 - All contributors and users who help improve SandSound
 
-## 📞 Contact & Support
+## Contact & Support
 
 - **Issues**: [GitHub Issues](https://github.com/Nasapan23/sandsound/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/Nasapan23/sandsound/discussions)
 
-## 🏷️ Topics & Keywords
+## Topics & Keywords
 
 This project is tagged with the following topics for easy discovery:
 
@@ -277,8 +289,8 @@ This project is tagged with the following topics for easy discovery:
 
 <div align="center">
 
-**Crafted with ❤️ by the SandSound community — primary maintainer: Nisipeanu Ionut**
+**Crafted by the SandSound community — primary maintainer: Nisipeanu Ionut**
 
-⭐ Star this repo if you find it useful!
+Star this repo if you find it useful!
 
 </div>

@@ -3,14 +3,14 @@ Playlist history view for SandSound.
 Shows all downloaded playlists and allows checking for new songs.
 """
 
-import threading
 import customtkinter as ctk
-from typing import Callable, List, Optional
-from datetime import datetime
+from typing import Callable, Optional
 
+from ..database import parse_timestamp
 from ..history import DownloadHistory, PlaylistRecord
-from ..downloader import Downloader, VideoInfo
+from ..downloader import Downloader
 from .components import Colors
+from .async_utils import BackgroundTaskPool
 
 
 class PlaylistHistoryRow(ctk.CTkFrame):
@@ -60,7 +60,7 @@ class PlaylistHistoryRow(ctk.CTkFrame):
         info_frame.pack(side="top", fill="x", pady=(4, 0))
         
         # Video count
-        video_count = len(playlist.videos)
+        video_count = playlist.video_count
         count_text = f"{video_count} song{'s' if video_count != 1 else ''} downloaded"
         count_label = ctk.CTkLabel(
             info_frame,
@@ -72,7 +72,7 @@ class PlaylistHistoryRow(ctk.CTkFrame):
         
         # Last downloaded date
         try:
-            last_dl = datetime.fromisoformat(playlist.last_downloaded)
+            last_dl = parse_timestamp(playlist.last_downloaded)
             date_str = last_dl.strftime("%Y-%m-%d")
         except:
             date_str = "Unknown"
@@ -139,7 +139,7 @@ class PlaylistHistoryRow(ctk.CTkFrame):
     def set_new_count(self, count: int) -> None:
         """Update the new videos indicator."""
         if count > 0:
-            self._new_indicator.configure(text=f"✨ {count} new song{'s' if count != 1 else ''}")
+            self._new_indicator.configure(text=f"{count} new song{'s' if count != 1 else ''}")
             self._new_indicator.pack(side="left", padx=(12, 0))
         else:
             self._new_indicator.pack_forget()
@@ -154,6 +154,8 @@ class PlaylistHistoryRow(ctk.CTkFrame):
 
 class PlaylistHistoryDialog(ctk.CTkToplevel):
     """Dialog for viewing playlist history and checking for new songs."""
+
+    MAX_HISTORY_CHECK_WORKERS = 2
     
     def __init__(
         self,
@@ -170,6 +172,7 @@ class PlaylistHistoryDialog(ctk.CTkToplevel):
         self._on_open_playlist = on_open_playlist
         self._rows: dict[str, PlaylistHistoryRow] = {}
         self._checking_playlists: set[str] = set()
+        self._history_pool = BackgroundTaskPool(self.MAX_HISTORY_CHECK_WORKERS)
         
         # Window setup
         self.title("Playlist History")
@@ -297,18 +300,21 @@ class PlaylistHistoryDialog(ctk.CTkToplevel):
         if row:
             row.set_checking(True)
         
-        # Check in background thread
-        threading.Thread(
-            target=self._check_playlist_worker,
-            args=(playlist_id, playlist.playlist_url),
-            daemon=True
-        ).start()
+        self._history_pool.submit(
+            self._check_playlist_worker,
+            playlist_id,
+            playlist.playlist_url,
+        )
     
     def _check_playlist_worker(self, playlist_id: str, playlist_url: str) -> None:
         """Worker thread to check playlist for new videos."""
         try:
             # Get current playlist info
-            info = self._downloader.get_video_info(playlist_url)
+            info = self._downloader.get_video_info(
+                playlist_url,
+                allow_cached=False,
+                force_refresh=True,
+            )
             
             if not info or not info.is_playlist or not info.entries:
                 self.after(0, lambda: self._check_complete(playlist_id, 0))
@@ -355,3 +361,8 @@ class PlaylistHistoryDialog(ctk.CTkToplevel):
         for playlist in playlists:
             if playlist.playlist_url:
                 self._check_playlist(playlist.playlist_id)
+
+    def destroy(self) -> None:
+        """Release background resources before closing the dialog."""
+        self._history_pool.shutdown()
+        super().destroy()

@@ -3,17 +3,20 @@ YouTube download service using yt-dlp.
 Handles video/audio downloading with cookie authentication.
 """
 
-import os
 import re
 import sys
 import threading
-from dataclasses import dataclass
+from datetime import datetime
+from dataclasses import asdict, dataclass
 from enum import Enum
 from io import StringIO
 from pathlib import Path
 from typing import Callable, List, Optional
 
 import yt_dlp
+from yt_dlp.utils import DownloadCancelled
+
+from .database import SandSoundDatabase, is_timestamp_fresh
 
 
 class DownloadStatus(Enum):
@@ -78,6 +81,43 @@ class _QuietLogger:
         pass
 
 
+class _FileLogger:
+    """File logger for yt-dlp output."""
+
+    def __init__(self, log_path: Path) -> None:
+        self._log_path = Path(log_path)
+        self._log_path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
+        self._tee_stdout = bool(getattr(sys.stdout, "isatty", lambda: False)())
+
+    def _write(self, level: str, msg: str) -> None:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        line = f"[{timestamp}] [{level}] {msg}\n"
+        with self._lock:
+            try:
+                with open(self._log_path, "a", encoding="utf-8", errors="ignore") as f:
+                    f.write(line)
+            except Exception:
+                pass
+        if self._tee_stdout:
+            try:
+                print(msg)
+            except Exception:
+                pass
+
+    def debug(self, msg: str) -> None:
+        self._write("DEBUG", msg)
+
+    def info(self, msg: str) -> None:
+        self._write("INFO", msg)
+
+    def warning(self, msg: str) -> None:
+        self._write("WARN", msg)
+
+    def error(self, msg: str) -> None:
+        self._write("ERROR", msg)
+
+
 class _SuppressStderr:
     """Context manager to suppress stderr output from yt-dlp."""
     
@@ -132,6 +172,7 @@ class Downloader:
         download_dir: str,
         cookie_file: Optional[str] = None,
         ffmpeg_location: Optional[str] = None,
+        database: Optional[SandSoundDatabase] = None,
     ) -> None:
         """
         Initialize downloader.
@@ -146,6 +187,9 @@ class Downloader:
         self._cookie_file = cookie_file
         self._ffmpeg_location = ffmpeg_location
         self._cancel_flag = threading.Event()
+        self._log_path = Path.home() / ".sandsound" / "sandsound.log"
+        self._logger = _FileLogger(self._log_path)
+        self._database = database or SandSoundDatabase()
 
     def set_cookie_file(self, cookie_file: str) -> None:
         """Update the cookie file path."""
@@ -204,8 +248,12 @@ class Downloader:
             "ignoreerrors": False,  # We handle errors ourselves
             "extract_flat": False,
             "no_check_certificates": True,
-            # Don't suppress logger - we need to see errors
-            # "logger": _QuietLogger(),  # Commented out to see errors
+            "logger": self._logger,
+            # Fail fast on HTTP errors (e.g. 403) so batch does not block
+            "retries": 3,
+            "fragment_retries": 3,
+            "extractor_retries": 3,
+            "socket_timeout": 30,
             # Use more permissive format selection
             "format_sort": ["res", "ext:mp4:m4a:mp3:webm", "acodec:aac:mp3"],
         }
@@ -233,16 +281,62 @@ class Downloader:
         """Context manager to suppress stderr output."""
         return _SuppressStderr()
 
-    def get_video_info(self, url: str) -> Optional[VideoInfo]:
-        """
-        Extract video or playlist information without downloading.
+    def _serialize_video_info(self, info: VideoInfo) -> dict:
+        """Convert VideoInfo objects into JSON-serializable dictionaries."""
+        return {
+            "url": info.url,
+            "title": info.title,
+            "duration": info.duration,
+            "thumbnail": info.thumbnail,
+            "is_playlist": info.is_playlist,
+            "playlist_count": info.playlist_count,
+            "uploader": info.uploader,
+            "playlist_id": info.playlist_id,
+            "entries": [asdict(entry) for entry in info.entries] if info.entries else [],
+        }
 
-        Args:
-            url: YouTube URL.
+    def _deserialize_video_info(self, payload: dict) -> VideoInfo:
+        """Rebuild VideoInfo instances from cached payloads."""
+        entries_payload = payload.get("entries") or []
+        entries = [
+            PlaylistItem(
+                video_id=entry.get("video_id", ""),
+                title=entry.get("title", "Unknown"),
+                duration=entry.get("duration"),
+                thumbnail=entry.get("thumbnail"),
+                url=entry.get("url"),
+            )
+            for entry in entries_payload
+            if entry.get("video_id")
+        ]
+        return VideoInfo(
+            url=payload.get("url", ""),
+            title=payload.get("title", "Unknown"),
+            duration=payload.get("duration"),
+            thumbnail=payload.get("thumbnail"),
+            is_playlist=bool(payload.get("is_playlist")),
+            playlist_count=payload.get("playlist_count", len(entries) or 1),
+            uploader=payload.get("uploader"),
+            playlist_id=payload.get("playlist_id"),
+            entries=entries or None,
+        )
 
-        Returns:
-            VideoInfo object or None if extraction fails.
-        """
+    def get_cached_video_info(self, url: str) -> Optional[VideoInfo]:
+        """Return cached metadata for a URL if available."""
+        cached = self._database.get_cached_media(url)
+        if not cached:
+            return None
+        return self._deserialize_video_info(cached["payload"])
+
+    def is_cache_fresh(self, url: str, max_age_seconds: int) -> bool:
+        """Check whether cached metadata is fresh enough for use."""
+        cached = self._database.get_cached_media(url)
+        if not cached:
+            return False
+        return is_timestamp_fresh(cached["fetched_at"], max_age_seconds)
+
+    def _extract_video_info(self, url: str) -> Optional[VideoInfo]:
+        """Extract video or playlist information without consulting the cache."""
         opts = self._get_base_options(playlist_title=None)
         opts["extract_flat"] = "in_playlist"
 
@@ -256,21 +350,25 @@ class Downloader:
 
                     is_playlist = info.get("_type") == "playlist"
                     raw_entries = info.get("entries", [])
-                    
-                    # Build playlist entries with video info
+
                     entries = None
                     if is_playlist and raw_entries:
                         entries = []
                         for entry in raw_entries:
-                            if entry:  # Skip None entries
-                                video_id = entry.get("id") or entry.get("url", "").split("=")[-1]
-                                entries.append(PlaylistItem(
+                            if not entry:
+                                continue
+                            video_id = entry.get("id") or entry.get("url", "").split("=")[-1]
+                            if not video_id:
+                                continue
+                            entries.append(
+                                PlaylistItem(
                                     video_id=video_id,
                                     title=entry.get("title", "Unknown"),
                                     duration=entry.get("duration"),
                                     thumbnail=entry.get("thumbnail"),
-                                    url=f"https://www.youtube.com/watch?v={video_id}"
-                                ))
+                                    url=f"https://www.youtube.com/watch?v={video_id}",
+                                )
+                            )
 
                     return VideoInfo(
                         url=url,
@@ -281,10 +379,44 @@ class Downloader:
                         playlist_count=len(entries) if entries else 1,
                         uploader=info.get("uploader"),
                         playlist_id=info.get("id") if is_playlist else None,
-                        entries=entries
+                        entries=entries,
                     )
         except Exception:
             return None
+
+    def get_video_info(
+        self,
+        url: str,
+        allow_cached: bool = True,
+        force_refresh: bool = False,
+    ) -> Optional[VideoInfo]:
+        """
+        Extract video or playlist information without downloading.
+
+        Args:
+            url: YouTube URL.
+            allow_cached: Whether cached metadata may be returned.
+            force_refresh: Whether cached metadata should be bypassed.
+
+        Returns:
+            VideoInfo object or None if extraction fails.
+        """
+        if allow_cached and not force_refresh:
+            cached_info = self.get_cached_video_info(url)
+            if cached_info:
+                return cached_info
+
+        fresh_info = self._extract_video_info(url)
+        if not fresh_info:
+            if allow_cached:
+                return self.get_cached_video_info(url)
+            return None
+
+        self._database.upsert_media_cache(
+            url,
+            self._serialize_video_info(fresh_info),
+        )
+        return fresh_info
 
     def download(
         self,
@@ -293,6 +425,7 @@ class Downloader:
         quality: str = "best",
         progress_callback: Optional[Callable[[DownloadProgress], None]] = None,
         playlist_title: Optional[str] = None,
+        cancel_event: Optional[threading.Event] = None,
     ) -> bool:
         """
         Download video or playlist.
@@ -307,10 +440,13 @@ class Downloader:
         Returns:
             True if download succeeded, False otherwise.
         """
-        self._cancel_flag.clear()
+        # Only clear the shared cancel flag when no per-task event is provided.
+        if cancel_event is None:
+            self._cancel_flag.clear()
 
         is_audio = format_type in self.AUDIO_FORMATS
         opts = self._get_base_options(playlist_title=playlist_title)
+        active_cancel = cancel_event or self._cancel_flag
 
         # Set format based on type
         if is_audio:
@@ -341,13 +477,39 @@ class Downloader:
         # Progress hook
         current_title = ["Unknown"]
 
-        def progress_hook(d: dict) -> None:
-            if self._cancel_flag.is_set():
-                raise Exception("Download cancelled")
+        def _is_cancelled() -> bool:
+            return active_cancel.is_set()
 
-            if progress_callback is None:
+        def _notify_cancel(progress: float, filename: str = "") -> None:
+            if progress_callback:
+                progress_callback(DownloadProgress(
+                    status=DownloadStatus.CANCELLED,
+                    title=current_title[0],
+                    progress=progress,
+                    speed="",
+                    eta="",
+                    filename=filename,
+                    error="Download cancelled.",
+                ))
+
+        def _maybe_set_title(info: Optional[dict]) -> None:
+            if not info or current_title[0] != "Unknown":
                 return
+            title = info.get("title")
+            if title:
+                current_title[0] = title
+                if progress_callback:
+                    progress_callback(DownloadProgress(
+                        status=DownloadStatus.PENDING,
+                        title=current_title[0],
+                        progress=0.0,
+                        speed="",
+                        eta="",
+                        filename="",
+                    ))
 
+        def progress_hook(d: dict) -> None:
+            _maybe_set_title(d.get("info_dict"))
             status = DownloadStatus.DOWNLOADING
             if d["status"] == "finished":
                 status = DownloadStatus.PROCESSING
@@ -378,6 +540,13 @@ class Downloader:
                 mins, secs = divmod(int(eta), 60)
                 eta_str = f"{mins}:{secs:02d}"
 
+            if _is_cancelled():
+                _notify_cancel(progress, d.get("filename", ""))
+                raise DownloadCancelled()
+
+            if progress_callback is None:
+                return
+
             progress_callback(DownloadProgress(
                 status=status,
                 title=current_title[0],
@@ -389,14 +558,18 @@ class Downloader:
 
         opts["progress_hooks"] = [progress_hook]
 
+        def match_filter(info, incomplete=False):
+            _maybe_set_title(info)
+            if _is_cancelled():
+                _notify_cancel(0.0)
+                raise DownloadCancelled()
+            return None
+
+        opts["match_filter"] = match_filter
+
         try:
             # Reduced debug output for better performance
             with yt_dlp.YoutubeDL(opts) as ydl:
-                # Get title first
-                info = ydl.extract_info(url, download=False)
-                if info:
-                    current_title[0] = info.get("title", "Unknown")
-
                 if progress_callback:
                     progress_callback(DownloadProgress(
                         status=DownloadStatus.PENDING,
@@ -421,15 +594,34 @@ class Downloader:
 
                 return True
 
+        except DownloadCancelled:
+            if progress_callback:
+                progress_callback(DownloadProgress(
+                    status=DownloadStatus.CANCELLED,
+                    title=current_title[0],
+                    progress=0.0,
+                    speed="",
+                    eta="",
+                    filename="",
+                    error="Download cancelled.",
+                ))
+            return False
         except Exception as e:
             error_msg = str(e)
             error_type = type(e).__name__
-            
-            # Only print errors to console (reduced verbosity)
-            # Full traceback only for unexpected errors
-            if "Video unavailable" not in error_msg and "not available" not in error_msg.lower():
+            # Known YouTube/yt-dlp errors: do not print full traceback (reduces console spam)
+            known_error = (
+                "Video unavailable" in error_msg
+                or "not available" in error_msg.lower()
+                or "rate-limited" in error_msg
+                or "403" in error_msg
+                or "401" in error_msg
+                or "Forbidden" in error_msg
+                or error_type in ("ExtractorError", "DownloadError")
+            )
+            print(f"[ERROR] Download failed: {error_type}: {error_msg}")
+            if not known_error:
                 import traceback
-                print(f"[ERROR] Download failed: {error_type}: {error_msg}")
                 traceback.print_exc()
             
             # If format error, try with a simpler fallback format
@@ -451,6 +643,7 @@ class Downloader:
                             fallback_opts["merge_output_format"] = format_type
                     
                     fallback_opts["progress_hooks"] = [progress_hook]
+                    fallback_opts["match_filter"] = match_filter
                     
                     print(f"[DEBUG] Retrying with fallback format...")
                     # Don't suppress stderr for fallback either

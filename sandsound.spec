@@ -1,27 +1,41 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 import sys
-import os
 from pathlib import Path
+
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+
 
 block_cipher = None
 
-# Get the project root directory
 project_root = Path(SPECPATH).parent
 
+datas = []
+datas += collect_data_files("customtkinter")
+
+hiddenimports = sorted(
+    set(
+        [
+            "customtkinter",
+            "tkinter",
+            "tkinter.filedialog",
+            "PIL",
+            "PIL._tkinter_finder",
+            "yt_dlp",
+        ]
+        + collect_submodules("customtkinter")
+        + collect_submodules("yt_dlp.downloader")
+        + collect_submodules("yt_dlp.extractor")
+        + collect_submodules("yt_dlp.postprocessor")
+    )
+)
+
 a = Analysis(
-    ['src/main.py'],
+    ["src/main.py"],
     pathex=[str(project_root)],
     binaries=[],
-    datas=[],
-    hiddenimports=[
-        'customtkinter',
-        'PIL',
-        'yt_dlp',
-        'yt_dlp.extractor',
-        'yt_dlp.postprocessor',
-        'yt_dlp.downloader',
-    ],
+    datas=datas,
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -41,18 +55,18 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='SandSound' if sys.platform != 'win32' else 'SandSound',
+    name="SandSound" if sys.platform != "win32" else "SandSound",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=False,  # Set to False for GUI app (no console window)
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,  # Add icon path here if you have one: 'path/to/icon.ico'
+    icon=None,
 )

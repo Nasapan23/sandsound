@@ -3,6 +3,7 @@ Settings dialog for SandSound.
 """
 
 import customtkinter as ctk
+import os
 import webbrowser
 from pathlib import Path
 from tkinter import filedialog
@@ -67,6 +68,12 @@ class SettingsDialog(ctk.CTkToplevel):
         # Download directory section
         self._create_download_section(container)
 
+        # Performance section
+        self._create_performance_section(container)
+
+        # Logs section
+        self._create_logs_section(container)
+
         # Theme section
         self._create_theme_section(container)
 
@@ -93,7 +100,7 @@ class SettingsDialog(ctk.CTkToplevel):
         is_available = self._config.is_ffmpeg_available()
         self._ffmpeg_status = ctk.CTkLabel(
             header,
-            text="✓ Available" if is_available else "✗ Not found",
+            text="Available" if is_available else "Not found",
             font=("Segoe UI", 11),
             text_color=Colors.SUCCESS if is_available else Colors.ERROR
         )
@@ -102,7 +109,7 @@ class SettingsDialog(ctk.CTkToplevel):
         # Info text
         info_text = "FFmpeg is required for audio conversion (MP3, etc.)"
         if not is_available:
-            info_text = "⚠️ FFmpeg not found! Required for audio conversion."
+            info_text = "Warning: FFmpeg not found! Required for audio conversion."
         
         info_label = ctk.CTkLabel(
             ffmpeg_frame,
@@ -142,7 +149,7 @@ class SettingsDialog(ctk.CTkToplevel):
 
         download_btn = ctk.CTkButton(
             download_frame,
-            text="📥 Download FFmpeg",
+            text="Download FFmpeg",
             height=36,
             font=("Segoe UI Semibold", 12),
             fg_color=Colors.PRIMARY,
@@ -177,7 +184,7 @@ class SettingsDialog(ctk.CTkToplevel):
 
         self._cookie_status = ctk.CTkLabel(
             cookie_header,
-            text="✓ Saved" if self._config.is_cookie_valid() else "Not configured",
+            text="Saved" if self._config.is_cookie_valid() else "Not configured",
             font=("Segoe UI", 11),
             text_color=Colors.SUCCESS if self._config.is_cookie_valid() else Colors.TEXT_MUTED
         )
@@ -261,6 +268,105 @@ class SettingsDialog(ctk.CTkToplevel):
             command=self._browse_download,
         )
         download_browse.pack(side="right")
+
+    def _create_performance_section(self, container: ctk.CTkFrame) -> None:
+        """Create performance and concurrency section."""
+        performance_frame = ctk.CTkFrame(container, corner_radius=10)
+        performance_frame.pack(fill="x", pady=(0, 15))
+
+        performance_label = ctk.CTkLabel(
+            performance_frame,
+            text="Performance",
+            font=("Segoe UI", 13, "bold"),
+        )
+        performance_label.pack(anchor="w", padx=15, pady=(15, 5))
+
+        performance_hint = ctk.CTkLabel(
+            performance_frame,
+            text="Choose how many downloads can run at the same time. Higher values improve playlist throughput but can trigger YouTube rate limits.",
+            font=("Segoe UI", 11),
+            text_color=Colors.TEXT_MUTED,
+            wraplength=480,
+            justify="left",
+        )
+        performance_hint.pack(anchor="w", padx=15, pady=(0, 8))
+
+        selector_row = ctk.CTkFrame(performance_frame, fg_color="transparent")
+        selector_row.pack(fill="x", padx=15, pady=(0, 15))
+
+        selector_label = ctk.CTkLabel(
+            selector_row,
+            text="Concurrent downloads",
+            font=("Segoe UI", 12),
+        )
+        selector_label.pack(side="left")
+
+        self._concurrent_var = ctk.StringVar(value=str(self._config.concurrent_downloads))
+        self._concurrent_dropdown = ctk.CTkComboBox(
+            selector_row,
+            values=[str(value) for value in range(Config.MIN_CONCURRENT_DOWNLOADS, Config.MAX_CONCURRENT_DOWNLOADS + 1)],
+            variable=self._concurrent_var,
+            width=90,
+            height=38,
+            state="readonly",
+            font=("Segoe UI", 12),
+            dropdown_font=("Segoe UI", 12),
+        )
+        self._concurrent_dropdown.pack(side="right")
+
+    def _create_logs_section(self, container: ctk.CTkFrame) -> None:
+        """Create logs section."""
+        logs_frame = ctk.CTkFrame(container, corner_radius=10)
+        logs_frame.pack(fill="x", pady=(0, 15))
+
+        logs_label = ctk.CTkLabel(
+            logs_frame,
+            text="Logs",
+            font=("Segoe UI", 13, "bold"),
+        )
+        logs_label.pack(anchor="w", padx=15, pady=(15, 5))
+
+        log_path = Path.home() / ".sandsound" / "sandsound.log"
+        log_hint = ctk.CTkLabel(
+            logs_frame,
+            text=f"Logs saved to: {log_path}",
+            font=("Segoe UI", 11),
+            text_color=Colors.TEXT_MUTED,
+            wraplength=480,
+            justify="left",
+        )
+        log_hint.pack(anchor="w", padx=15, pady=(0, 10))
+
+        open_btn = ctk.CTkButton(
+            logs_frame,
+            text="Open Log File",
+            width=140,
+            height=34,
+            font=("Segoe UI Semibold", 11),
+            fg_color=Colors.BG_INPUT,
+            hover_color=Colors.BG_CARD_HOVER,
+            text_color=Colors.TEXT_PRIMARY,
+            corner_radius=8,
+            command=self._open_log_file,
+        )
+        open_btn.pack(anchor="w", padx=15, pady=(0, 15))
+
+    def _open_log_file(self) -> None:
+        """Open the log file in the default viewer."""
+        log_path = Path.home() / ".sandsound" / "sandsound.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        if not log_path.exists():
+            try:
+                log_path.touch()
+            except Exception:
+                pass
+        try:
+            if hasattr(os, "startfile"):
+                os.startfile(str(log_path))
+            else:
+                webbrowser.open(log_path.as_uri())
+        except Exception:
+            pass
 
     def _create_theme_section(self, container: ctk.CTkFrame) -> None:
         """Create theme selection section."""
@@ -366,6 +472,9 @@ class SettingsDialog(ctk.CTkToplevel):
         download_dir = self._download_entry.get().strip()
         if download_dir:
             self._config.download_dir = download_dir
+
+        # Save concurrency
+        self._config.concurrent_downloads = self._concurrent_var.get().strip()
 
         # Save theme
         theme = self._theme_var.get().lower()
