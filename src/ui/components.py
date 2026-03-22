@@ -7,8 +7,8 @@ import customtkinter as ctk
 from typing import Callable, Optional, List
 from dataclasses import dataclass
 from enum import Enum
-import time
-import threading
+
+from .async_utils import DebouncedCallback
 
 
 # Color Palette - Premium dark theme
@@ -68,6 +68,11 @@ class UrlInput(ctk.CTkFrame):
         self._on_submit = on_submit
         self._on_info_fetched = on_info_fetched
         self._is_valid = False
+        self._validation_debouncer = DebouncedCallback(
+            schedule=lambda delay, callback: self.after(delay, callback),
+            cancel=self.after_cancel,
+            delay_ms=350,
+        )
 
         # Inner padding frame
         inner = ctk.CTkFrame(self, fg_color="transparent")
@@ -156,16 +161,21 @@ class UrlInput(ctk.CTkFrame):
             clipboard = self.clipboard_get()
             self._entry.delete(0, "end")
             self._entry.insert(0, clipboard)
-            self._validate()
+            self._validation_debouncer.flush(lambda _token: self._validate())
         except Exception:
             pass
 
     def _on_key_release(self, event) -> None:
         """Handle key release for validation."""
-        self._validate()
+        if not self.get_url():
+            self._validation_debouncer.cancel_pending()
+            self._validate()
+            return
+        self._validation_debouncer.schedule(lambda _token: self._validate())
 
     def _on_enter(self, event) -> None:
         """Handle Enter key press."""
+        self._validation_debouncer.flush(lambda _token: self._validate())
         if self._is_valid and self._on_submit:
             self._on_submit(self.get_url())
 
@@ -204,10 +214,11 @@ class UrlInput(ctk.CTkFrame):
         """Set the URL in the entry."""
         self._entry.delete(0, "end")
         self._entry.insert(0, url)
-        self._validate()
+        self._validation_debouncer.flush(lambda _token: self._validate())
 
     def clear(self) -> None:
         """Clear the input field."""
+        self._validation_debouncer.cancel_pending()
         self._entry.delete(0, "end")
         self._is_valid = False
         self._status_label.configure(text="")
@@ -578,8 +589,9 @@ class ProgressCard(ctk.CTkFrame):
             # Only update progress bar if value changed significantly (reduce redraws)
             current_progress = self._progress.get() * 100.0
             if abs(current_progress - progress) >= 1.0 or progress == 0.0 or progress >= 100.0:
+                self._progress.configure(progress_color=Colors.PRIMARY)
                 self._progress.set(progress / 100.0)
-                self._percent_label.configure(text=f"{progress:.0f}%")
+                self._percent_label.configure(text=f"{progress:.0f}%", text_color=Colors.PRIMARY_LIGHT)
             
             # Update speed and ETA (these change frequently)
             if speed:
@@ -599,6 +611,7 @@ class ProgressCard(ctk.CTkFrame):
         """Reset to initial state."""
         self._title_label.configure(text="Ready to download")
         self._status_label.configure(text="Paste a YouTube URL to begin downloading")
+        self._progress.configure(progress_color=Colors.PRIMARY)
         self._progress.set(0)
         self._percent_label.configure(text="")
         self._speed_label.configure(text="")

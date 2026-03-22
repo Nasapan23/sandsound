@@ -53,7 +53,7 @@ SandSound is a modern, open-source desktop application for downloading YouTube v
 - **Playlist Support** - Visual table view showing each video with download status
 - **Smart Re-download** - Automatically detects and downloads only new videos from playlists
 - **Cookie Authentication** - Paste cookies directly for accessing age-restricted content
-- **Download History** - Persistent tracking of downloaded content with playlist management
+- **Download History** - Persistent SQLite tracking of downloaded content with playlist management
 - **Concurrent Downloads** - Download up to 4 files simultaneously for faster processing
 
 ### User Experience
@@ -171,15 +171,19 @@ Access settings via the Settings button in the top-right:
 - Configure download directory
 - Set FFmpeg path
 - Manage cookie file
+- Adjust concurrent downloads for playlist performance
 - Adjust theme preferences
 
 ## Configuration
 
-All settings are stored in `~/.sandsound/` (or `%USERPROFILE%\.sandsound\` on Windows):
+SandSound stores its local data in `~/.sandsound/` (or `%USERPROFILE%\.sandsound\` on Windows):
 
 - `config.json` - Application settings (download directory, theme, etc.)
 - `cookies.txt` - YouTube cookies for authentication
-- `download_history.json` - Download history for smart re-downloads
+- `sandsound.db` - Auto-created SQLite database for download history and metadata cache
+- `download_history.json.bak` - Preserved backup created automatically after first-run migration from older JSON history files
+
+Playlist and video metadata is cached in the same SQLite database so playlist detection and reopen flows are faster. Fresh playlist checks still force a live refresh before comparing for new videos.
 
 ## Troubleshooting
 

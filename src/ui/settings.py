@@ -68,6 +68,9 @@ class SettingsDialog(ctk.CTkToplevel):
         # Download directory section
         self._create_download_section(container)
 
+        # Performance section
+        self._create_performance_section(container)
+
         # Logs section
         self._create_logs_section(container)
 
@@ -266,6 +269,51 @@ class SettingsDialog(ctk.CTkToplevel):
         )
         download_browse.pack(side="right")
 
+    def _create_performance_section(self, container: ctk.CTkFrame) -> None:
+        """Create performance and concurrency section."""
+        performance_frame = ctk.CTkFrame(container, corner_radius=10)
+        performance_frame.pack(fill="x", pady=(0, 15))
+
+        performance_label = ctk.CTkLabel(
+            performance_frame,
+            text="Performance",
+            font=("Segoe UI", 13, "bold"),
+        )
+        performance_label.pack(anchor="w", padx=15, pady=(15, 5))
+
+        performance_hint = ctk.CTkLabel(
+            performance_frame,
+            text="Choose how many downloads can run at the same time. Higher values improve playlist throughput but can trigger YouTube rate limits.",
+            font=("Segoe UI", 11),
+            text_color=Colors.TEXT_MUTED,
+            wraplength=480,
+            justify="left",
+        )
+        performance_hint.pack(anchor="w", padx=15, pady=(0, 8))
+
+        selector_row = ctk.CTkFrame(performance_frame, fg_color="transparent")
+        selector_row.pack(fill="x", padx=15, pady=(0, 15))
+
+        selector_label = ctk.CTkLabel(
+            selector_row,
+            text="Concurrent downloads",
+            font=("Segoe UI", 12),
+        )
+        selector_label.pack(side="left")
+
+        self._concurrent_var = ctk.StringVar(value=str(self._config.concurrent_downloads))
+        self._concurrent_dropdown = ctk.CTkComboBox(
+            selector_row,
+            values=[str(value) for value in range(Config.MIN_CONCURRENT_DOWNLOADS, Config.MAX_CONCURRENT_DOWNLOADS + 1)],
+            variable=self._concurrent_var,
+            width=90,
+            height=38,
+            state="readonly",
+            font=("Segoe UI", 12),
+            dropdown_font=("Segoe UI", 12),
+        )
+        self._concurrent_dropdown.pack(side="right")
+
     def _create_logs_section(self, container: ctk.CTkFrame) -> None:
         """Create logs section."""
         logs_frame = ctk.CTkFrame(container, corner_radius=10)
@@ -424,6 +472,9 @@ class SettingsDialog(ctk.CTkToplevel):
         download_dir = self._download_entry.get().strip()
         if download_dir:
             self._config.download_dir = download_dir
+
+        # Save concurrency
+        self._config.concurrent_downloads = self._concurrent_var.get().strip()
 
         # Save theme
         theme = self._theme_var.get().lower()

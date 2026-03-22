@@ -275,6 +275,7 @@ class PlaylistTable(ctk.CTkScrollableFrame):
         self._rows: Dict[str, PlaylistTableRow] = {}
         self._on_selection_change = on_selection_change
         self._selection_state: Dict[str, bool] = {}  # Track selection even for unrendered rows
+        self._selected_count = 0
         self._render_index = 0
         self._is_rendering = False
         
@@ -284,6 +285,7 @@ class PlaylistTable(ctk.CTkScrollableFrame):
             video.video_id: not video.is_downloaded 
             for video in videos
         }
+        self._selected_count = sum(1 for selected in self._selection_state.values() if selected)
         
         # Header row
         header = ctk.CTkFrame(self, fg_color=Colors.BG_CARD_HOVER, height=40)
@@ -385,15 +387,16 @@ class PlaylistTable(ctk.CTkScrollableFrame):
     
     def _on_row_toggle(self, video_id: str, selected: bool) -> None:
         """Handle row selection toggle."""
-        # Update selection state
+        previous = self._selection_state.get(video_id, False)
         self._selection_state[video_id] = selected
+        if previous != selected:
+            self._selected_count += 1 if selected else -1
         if self._on_selection_change:
-            self._on_selection_change(self.get_selected_count())
+            self._on_selection_change(self._selected_count)
     
     def get_selected_count(self) -> int:
         """Get count of selected videos."""
-        # Use selection state to include unrendered rows
-        return sum(1 for selected in self._selection_state.values() if selected)
+        return self._selected_count
     
     def get_selected_ids(self) -> List[str]:
         """Get list of selected video IDs."""
@@ -402,37 +405,39 @@ class PlaylistTable(ctk.CTkScrollableFrame):
     
     def select_all(self) -> None:
         """Select all videos."""
-        # Update selection state for all
         for video in self._videos:
             self._selection_state[video.video_id] = True
-        # Update rendered rows
+        self._selected_count = len(self._videos)
         for row in self._rows.values():
             row.set_selected(True)
         if self._on_selection_change:
-            self._on_selection_change(len(self._videos))
+            self._on_selection_change(self._selected_count)
     
     def deselect_all(self) -> None:
         """Deselect all videos."""
-        # Update selection state for all
         for video in self._videos:
             self._selection_state[video.video_id] = False
-        # Update rendered rows
+        self._selected_count = 0
         for row in self._rows.values():
             row.set_selected(False)
         if self._on_selection_change:
-            self._on_selection_change(0)
+            self._on_selection_change(self._selected_count)
     
     def select_new_only(self) -> None:
         """Select only videos that haven't been downloaded."""
+        selected_count = 0
         for video in self._videos:
             selected = not video.is_downloaded
             self._selection_state[video.video_id] = selected
+            if selected:
+                selected_count += 1
             # Update rendered row if it exists
             row = self._rows.get(video.video_id)
             if row:
                 row.set_selected(selected)
+        self._selected_count = selected_count
         if self._on_selection_change:
-            self._on_selection_change(self.get_selected_count())
+            self._on_selection_change(self._selected_count)
     
     def update_video_status(
         self,

@@ -1,18 +1,19 @@
 """
 Download history management for SandSound.
-Tracks downloaded videos to enable smart re-downloading of playlists.
 """
 
-import json
-from datetime import datetime
-from pathlib import Path
-from dataclasses import dataclass, field, asdict
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass, field
 from typing import Dict, List, Optional, Set
+
+from .database import SandSoundDatabase
 
 
 @dataclass
 class DownloadedVideo:
     """Record of a downloaded video."""
+
     video_id: str
     title: str
     downloaded_at: str
@@ -23,94 +24,63 @@ class DownloadedVideo:
 @dataclass
 class PlaylistRecord:
     """Record of a downloaded playlist."""
+
     playlist_id: str
     playlist_url: str
     title: str
     last_downloaded: str
     videos: Dict[str, DownloadedVideo] = field(default_factory=dict)
-    
+    video_count: int = 0
+
     def to_dict(self) -> dict:
-        """Convert to dictionary for JSON serialization."""
+        """Convert to a dictionary compatible with legacy JSON history."""
         return {
             "playlist_id": self.playlist_id,
             "playlist_url": self.playlist_url,
             "title": self.title,
             "last_downloaded": self.last_downloaded,
-            "videos": {vid: asdict(v) for vid, v in self.videos.items()}
+            "videos": {video_id: asdict(video) for video_id, video in self.videos.items()},
+            "video_count": self.video_count or len(self.videos),
         }
-    
+
     @classmethod
-    def from_dict(cls, data: dict) -> "PlaylistRecord":
-        """Create from dictionary."""
-        videos = {}
-        for vid, v_data in data.get("videos", {}).items():
-            videos[vid] = DownloadedVideo(**v_data)
+    def from_dict(cls, payload: dict) -> "PlaylistRecord":
+        """Create a playlist record from a serialized payload."""
+        videos = {
+            video_id: DownloadedVideo(**video_data)
+            for video_id, video_data in payload.get("videos", {}).items()
+        }
         return cls(
-            playlist_id=data["playlist_id"],
-            playlist_url=data["playlist_url"],
-            title=data["title"],
-            last_downloaded=data["last_downloaded"],
-            videos=videos
+            playlist_id=payload["playlist_id"],
+            playlist_url=payload.get("playlist_url", ""),
+            title=payload.get("title", "Unknown Playlist"),
+            last_downloaded=payload.get("last_downloaded", ""),
+            videos=videos,
+            video_count=payload.get("video_count", len(videos)),
         )
 
 
 class DownloadHistory:
     """
-    Manages download history with JSON persistence.
-    Tracks which videos have been downloaded from which playlists
-    to enable smart re-downloading.
+    SQLite-backed download history facade.
     """
-    
-    def __init__(self, history_path: Optional[str] = None) -> None:
-        """
-        Initialize history manager.
-        
-        Args:
-            history_path: Path to history file. Defaults to ~/.sandsound/download_history.json
-        """
-        if history_path:
-            self._history_path = Path(history_path)
-        else:
-            history_dir = Path.home() / ".sandsound"
-            history_dir.mkdir(parents=True, exist_ok=True)
-            self._history_path = history_dir / "download_history.json"
-        
-        self._playlists: Dict[str, PlaylistRecord] = {}
-        self._single_videos: Dict[str, DownloadedVideo] = {}
-        self._load()
-    
-    def _load(self) -> None:
-        """Load history from file."""
-        if self._history_path.exists():
-            try:
-                with open(self._history_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                
-                # Load playlists
-                for pid, p_data in data.get("playlists", {}).items():
-                    self._playlists[pid] = PlaylistRecord.from_dict(p_data)
-                
-                # Load single videos
-                for vid, v_data in data.get("single_videos", {}).items():
-                    self._single_videos[vid] = DownloadedVideo(**v_data)
-                    
-            except (json.JSONDecodeError, IOError, KeyError) as e:
-                print(f"Failed to load history: {e}")
-                self._playlists = {}
-                self._single_videos = {}
-    
-    def _save(self) -> None:
-        """Persist history to file."""
-        try:
-            data = {
-                "playlists": {pid: p.to_dict() for pid, p in self._playlists.items()},
-                "single_videos": {vid: asdict(v) for vid, v in self._single_videos.items()}
-            }
-            with open(self._history_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
-        except IOError as e:
-            print(f"Failed to save history: {e}")
-    
+
+    def __init__(
+        self,
+        database: Optional[SandSoundDatabase] = None,
+        db_path: Optional[str] = None,
+        legacy_history_path: Optional[str] = None,
+    ) -> None:
+        self._database = database or SandSoundDatabase(
+            db_path=db_path,
+            legacy_history_path=legacy_history_path,
+        )
+
+    @property
+    def db_path(self) -> str:
+        """Return the backing SQLite database path."""
+        return str(self._database.db_path)
+
     def add_video_download(
         self,
         video_id: str,
@@ -119,141 +89,102 @@ class DownloadHistory:
         quality: str,
         playlist_id: Optional[str] = None,
         playlist_url: Optional[str] = None,
-        playlist_title: Optional[str] = None
+        playlist_title: Optional[str] = None,
     ) -> None:
-        """
-        Record a video download.
-        
-        Args:
-            video_id: YouTube video ID
-            title: Video title
-            format_type: Download format (mp3, mp4, etc.)
-            quality: Quality setting
-            playlist_id: Optional playlist ID if part of playlist
-            playlist_url: Optional playlist URL
-            playlist_title: Optional playlist title
-        """
-        now = datetime.now().isoformat()
-        video = DownloadedVideo(
+        """Record a video download."""
+        self._database.add_video_download(
             video_id=video_id,
             title=title,
-            downloaded_at=now,
-            format=format_type,
-            quality=quality
+            format_type=format_type,
+            quality=quality,
+            playlist_id=playlist_id,
+            playlist_url=playlist_url,
+            playlist_title=playlist_title,
         )
-        
-        if playlist_id:
-            # Add to playlist record
-            if playlist_id not in self._playlists:
-                self._playlists[playlist_id] = PlaylistRecord(
-                    playlist_id=playlist_id,
-                    playlist_url=playlist_url or "",
-                    title=playlist_title or "Unknown Playlist",
-                    last_downloaded=now,
-                    videos={}
-                )
-            self._playlists[playlist_id].videos[video_id] = video
-            self._playlists[playlist_id].last_downloaded = now
-        else:
-            # Single video download
-            self._single_videos[video_id] = video
-        
-        self._save()
-    
+
     def get_downloaded_video_ids(self, playlist_id: str) -> Set[str]:
-        """
-        Get set of video IDs already downloaded from a playlist.
-        
-        Args:
-            playlist_id: Playlist ID
-            
-        Returns:
-            Set of video IDs that have been downloaded
-        """
-        if playlist_id in self._playlists:
-            return set(self._playlists[playlist_id].videos.keys())
-        return set()
-    
+        """Get all downloaded video IDs for a playlist."""
+        return self._database.get_downloaded_video_ids(playlist_id)
+
     def get_new_videos(
         self,
         playlist_id: str,
-        current_video_ids: List[str]
+        current_video_ids: List[str],
     ) -> List[str]:
-        """
-        Get list of video IDs that haven't been downloaded yet.
-        
-        Args:
-            playlist_id: Playlist ID
-            current_video_ids: List of current video IDs in playlist
-            
-        Returns:
-            List of video IDs not yet downloaded
-        """
-        downloaded = self.get_downloaded_video_ids(playlist_id)
-        return [vid for vid in current_video_ids if vid not in downloaded]
-    
+        """Return the subset of current playlist items not yet downloaded."""
+        downloaded_ids = self.get_downloaded_video_ids(playlist_id)
+        return [video_id for video_id in current_video_ids if video_id not in downloaded_ids]
+
     def is_video_downloaded(
         self,
         video_id: str,
-        playlist_id: Optional[str] = None
+        playlist_id: Optional[str] = None,
     ) -> bool:
-        """
-        Check if a video has been downloaded.
-        
-        Args:
-            video_id: Video ID to check
-            playlist_id: Optional playlist context
-            
-        Returns:
-            True if video was previously downloaded
-        """
-        if playlist_id and playlist_id in self._playlists:
-            return video_id in self._playlists[playlist_id].videos
-        return video_id in self._single_videos
-    
-    def get_playlist_record(self, playlist_id: str) -> Optional[PlaylistRecord]:
-        """Get the record for a playlist if it exists."""
-        return self._playlists.get(playlist_id)
-    
+        """Check whether a video has been downloaded."""
+        return self._database.is_video_downloaded(video_id, playlist_id=playlist_id)
+
+    def get_playlist_record(
+        self,
+        playlist_id: str,
+        include_videos: bool = False,
+    ) -> Optional[PlaylistRecord]:
+        """Get a playlist record if it exists."""
+        summary = self._database.get_playlist_summary(playlist_id)
+        if not summary:
+            return None
+
+        videos: Dict[str, DownloadedVideo] = {}
+        if include_videos:
+            videos = self._build_downloaded_videos(
+                self._database.get_playlist_downloads(playlist_id)
+            )
+
+        return PlaylistRecord(
+            playlist_id=summary["playlist_id"],
+            playlist_url=summary["playlist_url"],
+            title=summary["title"],
+            last_downloaded=summary["last_downloaded"],
+            videos=videos,
+            video_count=summary["video_count"],
+        )
+
     def clear_playlist(self, playlist_id: str) -> None:
         """Remove a playlist from history."""
-        if playlist_id in self._playlists:
-            del self._playlists[playlist_id]
-            self._save()
-    
+        self._database.clear_playlist(playlist_id)
+
     def clear_all(self) -> None:
-        """Clear all history."""
-        self._playlists = {}
-        self._single_videos = {}
-        self._save()
-    
+        """Clear all stored download history."""
+        self._database.clear_all_history()
+
     def get_all_playlists(self) -> List[PlaylistRecord]:
-        """
-        Get all playlists in history.
-        
-        Returns:
-            List of all PlaylistRecord objects, sorted by last_downloaded (newest first)
-        """
-        playlists = list(self._playlists.values())
-        # Sort by last_downloaded, newest first
-        playlists.sort(key=lambda p: p.last_downloaded, reverse=True)
-        return playlists
-    
+        """Return all playlist summaries, newest first."""
+        return [
+            PlaylistRecord(
+                playlist_id=summary["playlist_id"],
+                playlist_url=summary["playlist_url"],
+                title=summary["title"],
+                last_downloaded=summary["last_downloaded"],
+                video_count=summary["video_count"],
+            )
+            for summary in self._database.get_playlist_summaries()
+        ]
+
     def check_for_new_videos(
         self,
         playlist_id: str,
-        current_video_ids: List[str]
+        current_video_ids: List[str],
     ) -> tuple[List[str], int]:
-        """
-        Check for new videos in a playlist.
-        
-        Args:
-            playlist_id: Playlist ID to check
-            current_video_ids: List of current video IDs in the playlist
-            
-        Returns:
-            Tuple of (new_video_ids, total_new_count)
-        """
-        downloaded = self.get_downloaded_video_ids(playlist_id)
-        new_videos = [vid for vid in current_video_ids if vid not in downloaded]
+        """Return new video IDs and a count for a playlist."""
+        new_videos = self.get_new_videos(playlist_id, current_video_ids)
         return new_videos, len(new_videos)
+
+    @staticmethod
+    def _build_downloaded_videos(
+        payload: dict[str, dict],
+    ) -> Dict[str, DownloadedVideo]:
+        """Convert raw rows into DownloadedVideo objects."""
+        return {
+            video_id: DownloadedVideo(**video_data)
+            for video_id, video_data in payload.items()
+        }
+

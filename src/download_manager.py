@@ -100,8 +100,17 @@ class DownloadManager:
             tasks: List of download tasks to queue
         """
         with self._lock:
+            if self._is_running:
+                raise RuntimeError("Download manager is already running")
+            self._shutdown_executor_locked(wait=False, cancel_futures=True)
+            self._tasks = {}
+            self._futures = {}
+            self._cancel_flags = {}
             self._is_running = True
-            self._executor = ThreadPoolExecutor(max_workers=self._max_workers)
+            self._executor = ThreadPoolExecutor(
+                max_workers=self._max_workers,
+                thread_name_prefix="SandSoundDownload",
+            )
             
             for task in tasks:
                 self._tasks[task.task_id] = task
@@ -198,9 +207,11 @@ class DownloadManager:
                 t.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED)
                 for t in self._tasks.values()
             )
+            if all_done:
+                self._is_running = False
+                self._shutdown_executor_locked(wait=False, cancel_futures=False)
         
         if all_done:
-            self._is_running = False
             if self._on_batch_complete:
                 self._on_batch_complete()
     
@@ -305,9 +316,7 @@ class DownloadManager:
             self._is_running = False
 
         # Shutdown executor
-        if self._executor:
-            self._executor.shutdown(wait=False)
-            self._executor = None
+        self._shutdown_executor(wait=False, cancel_futures=True)
 
         for task in tasks_to_notify:
             self._notify_task_update(task)
@@ -357,3 +366,20 @@ class DownloadManager:
             self._tasks.clear()
             self._futures.clear()
             self._cancel_flags.clear()
+
+    def close(self) -> None:
+        """Release executor resources."""
+        self.clear()
+
+    def _shutdown_executor(self, *, wait: bool, cancel_futures: bool) -> None:
+        """Shut down the current executor safely."""
+        with self._lock:
+            self._shutdown_executor_locked(wait=wait, cancel_futures=cancel_futures)
+
+    def _shutdown_executor_locked(self, *, wait: bool, cancel_futures: bool) -> None:
+        """Shut down the executor while the manager lock is already held."""
+        if self._executor is None:
+            return
+        executor = self._executor
+        self._executor = None
+        executor.shutdown(wait=wait, cancel_futures=cancel_futures)

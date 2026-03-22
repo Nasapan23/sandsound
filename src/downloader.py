@@ -3,12 +3,11 @@ YouTube download service using yt-dlp.
 Handles video/audio downloading with cookie authentication.
 """
 
-import os
 import re
 import sys
 import threading
 from datetime import datetime
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from enum import Enum
 from io import StringIO
 from pathlib import Path
@@ -16,6 +15,8 @@ from typing import Callable, List, Optional
 
 import yt_dlp
 from yt_dlp.utils import DownloadCancelled
+
+from .database import SandSoundDatabase, is_timestamp_fresh
 
 
 class DownloadStatus(Enum):
@@ -171,6 +172,7 @@ class Downloader:
         download_dir: str,
         cookie_file: Optional[str] = None,
         ffmpeg_location: Optional[str] = None,
+        database: Optional[SandSoundDatabase] = None,
     ) -> None:
         """
         Initialize downloader.
@@ -187,6 +189,7 @@ class Downloader:
         self._cancel_flag = threading.Event()
         self._log_path = Path.home() / ".sandsound" / "sandsound.log"
         self._logger = _FileLogger(self._log_path)
+        self._database = database or SandSoundDatabase()
 
     def set_cookie_file(self, cookie_file: str) -> None:
         """Update the cookie file path."""
@@ -278,16 +281,62 @@ class Downloader:
         """Context manager to suppress stderr output."""
         return _SuppressStderr()
 
-    def get_video_info(self, url: str) -> Optional[VideoInfo]:
-        """
-        Extract video or playlist information without downloading.
+    def _serialize_video_info(self, info: VideoInfo) -> dict:
+        """Convert VideoInfo objects into JSON-serializable dictionaries."""
+        return {
+            "url": info.url,
+            "title": info.title,
+            "duration": info.duration,
+            "thumbnail": info.thumbnail,
+            "is_playlist": info.is_playlist,
+            "playlist_count": info.playlist_count,
+            "uploader": info.uploader,
+            "playlist_id": info.playlist_id,
+            "entries": [asdict(entry) for entry in info.entries] if info.entries else [],
+        }
 
-        Args:
-            url: YouTube URL.
+    def _deserialize_video_info(self, payload: dict) -> VideoInfo:
+        """Rebuild VideoInfo instances from cached payloads."""
+        entries_payload = payload.get("entries") or []
+        entries = [
+            PlaylistItem(
+                video_id=entry.get("video_id", ""),
+                title=entry.get("title", "Unknown"),
+                duration=entry.get("duration"),
+                thumbnail=entry.get("thumbnail"),
+                url=entry.get("url"),
+            )
+            for entry in entries_payload
+            if entry.get("video_id")
+        ]
+        return VideoInfo(
+            url=payload.get("url", ""),
+            title=payload.get("title", "Unknown"),
+            duration=payload.get("duration"),
+            thumbnail=payload.get("thumbnail"),
+            is_playlist=bool(payload.get("is_playlist")),
+            playlist_count=payload.get("playlist_count", len(entries) or 1),
+            uploader=payload.get("uploader"),
+            playlist_id=payload.get("playlist_id"),
+            entries=entries or None,
+        )
 
-        Returns:
-            VideoInfo object or None if extraction fails.
-        """
+    def get_cached_video_info(self, url: str) -> Optional[VideoInfo]:
+        """Return cached metadata for a URL if available."""
+        cached = self._database.get_cached_media(url)
+        if not cached:
+            return None
+        return self._deserialize_video_info(cached["payload"])
+
+    def is_cache_fresh(self, url: str, max_age_seconds: int) -> bool:
+        """Check whether cached metadata is fresh enough for use."""
+        cached = self._database.get_cached_media(url)
+        if not cached:
+            return False
+        return is_timestamp_fresh(cached["fetched_at"], max_age_seconds)
+
+    def _extract_video_info(self, url: str) -> Optional[VideoInfo]:
+        """Extract video or playlist information without consulting the cache."""
         opts = self._get_base_options(playlist_title=None)
         opts["extract_flat"] = "in_playlist"
 
@@ -301,21 +350,25 @@ class Downloader:
 
                     is_playlist = info.get("_type") == "playlist"
                     raw_entries = info.get("entries", [])
-                    
-                    # Build playlist entries with video info
+
                     entries = None
                     if is_playlist and raw_entries:
                         entries = []
                         for entry in raw_entries:
-                            if entry:  # Skip None entries
-                                video_id = entry.get("id") or entry.get("url", "").split("=")[-1]
-                                entries.append(PlaylistItem(
+                            if not entry:
+                                continue
+                            video_id = entry.get("id") or entry.get("url", "").split("=")[-1]
+                            if not video_id:
+                                continue
+                            entries.append(
+                                PlaylistItem(
                                     video_id=video_id,
                                     title=entry.get("title", "Unknown"),
                                     duration=entry.get("duration"),
                                     thumbnail=entry.get("thumbnail"),
-                                    url=f"https://www.youtube.com/watch?v={video_id}"
-                                ))
+                                    url=f"https://www.youtube.com/watch?v={video_id}",
+                                )
+                            )
 
                     return VideoInfo(
                         url=url,
@@ -326,10 +379,44 @@ class Downloader:
                         playlist_count=len(entries) if entries else 1,
                         uploader=info.get("uploader"),
                         playlist_id=info.get("id") if is_playlist else None,
-                        entries=entries
+                        entries=entries,
                     )
         except Exception:
             return None
+
+    def get_video_info(
+        self,
+        url: str,
+        allow_cached: bool = True,
+        force_refresh: bool = False,
+    ) -> Optional[VideoInfo]:
+        """
+        Extract video or playlist information without downloading.
+
+        Args:
+            url: YouTube URL.
+            allow_cached: Whether cached metadata may be returned.
+            force_refresh: Whether cached metadata should be bypassed.
+
+        Returns:
+            VideoInfo object or None if extraction fails.
+        """
+        if allow_cached and not force_refresh:
+            cached_info = self.get_cached_video_info(url)
+            if cached_info:
+                return cached_info
+
+        fresh_info = self._extract_video_info(url)
+        if not fresh_info:
+            if allow_cached:
+                return self.get_cached_video_info(url)
+            return None
+
+        self._database.upsert_media_cache(
+            url,
+            self._serialize_video_info(fresh_info),
+        )
+        return fresh_info
 
     def download(
         self,
