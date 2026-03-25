@@ -112,6 +112,7 @@ desktop.ini
 *.md
 !.agent/**/*.md
 !README.md
+!CHANGELOG.md
 
 # YouTube cookies (sensitive data)
 cookies.txt

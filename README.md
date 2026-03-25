@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-1.0.2-blue.svg)
+![Version](https://img.shields.io/badge/version-1.0.4-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.10+-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)
@@ -13,7 +13,7 @@ Perfect for musicians, content creators, and anyone who needs a reliable YouTube
 
 > **Note**: SandSound is a GUI wrapper built on top of [yt-dlp](https://github.com/yt-dlp/yt-dlp), adding features like download history tracking, playlist management, smart re-download detection, and a modern desktop interface. All core downloading functionality is powered by yt-dlp.
 
-[Features](#-features) • [Installation](#-installation) • [Usage](#-usage) • [Contributing](#-contributing) • [License](#-license)
+[Features](#-features) - [Installation](#-installation) - [Usage](#-usage) - [Changelog](#changelog) - [Contributing](#-contributing) - [License](#-license)
 
 </div>
 
@@ -21,7 +21,7 @@ Perfect for musicians, content creators, and anyone who needs a reliable YouTube
 
 <div align="center">
 
-**Topics**: `youtube-downloader` • `audio` • `music` • `open-source` • `cli-tool` • `yt-dlp` • `musicians` • `youtube` • `downloader` • `mp3` • `playlist` • `python` • `desktop-app` • `gui` • `customtkinter`
+**Topics**: `youtube-downloader` - `audio` - `music` - `open-source` - `cli-tool` - `yt-dlp` - `musicians` - `youtube` - `downloader` - `mp3` - `playlist` - `python` - `desktop-app` - `gui` - `customtkinter`
 
 </div>
 
@@ -62,6 +62,21 @@ SandSound is a modern, open-source desktop application for downloading YouTube v
 - **Format Selection** - Choose from multiple audio/video formats and quality settings
 - **Progress Tracking** - Real-time progress updates with speed and ETA information
 - **Customizable Settings** - Configure download directory, FFmpeg path, and more
+
+## Changelog
+
+Project history is tracked in [CHANGELOG.md](CHANGELOG.md).
+
+### Latest Release: v1.0.4
+
+- Added SQLite-backed persistence for download history and metadata caching.
+- Added automatic migration from legacy `download_history.json` into `sandsound.db` with backup preservation.
+- Added playlist/dialog performance improvements and async UI helper utilities.
+- Added configurable concurrent downloads in Settings (bounded between 1 and 8).
+- Added download cancellation controls for single and playlist downloads.
+- Added automated unit tests and CI test execution in the release workflow.
+- Improved PyInstaller packaging hooks/import discovery for more reliable builds.
+- Updated runtime guidance for yt-dlp JavaScript runtime requirements.
 
 ## Screenshots
 
@@ -281,16 +296,17 @@ This project is tagged with the following topics for easy discovery:
 - `musicians` - Designed with musicians in mind
 
 **Additional Tags:**
-- `youtube` • `downloader` • `mp3` • `playlist` • `python` • `desktop-app` • `gui` • `customtkinter` • `video-downloader` • `audio-extractor` • `batch-download` • `playlist-manager`
+- `youtube` - `downloader` - `mp3` - `playlist` - `python` - `desktop-app` - `gui` - `customtkinter` - `video-downloader` - `audio-extractor` - `batch-download` - `playlist-manager`
 
-> **Note**: To add these topics to your GitHub repository, go to the repository page → click the gear icon next to "About" → add topics in the "Topics" field.
+> **Note**: To add these topics to your GitHub repository, go to the repository page -> click the gear icon next to "About" -> add topics in the "Topics" field.
 
 ---
 
 <div align="center">
 
-**Crafted by the SandSound community — primary maintainer: Nisipeanu Ionut**
+**Crafted by the SandSound community - primary maintainer: Nisipeanu Ionut**
 
 Star this repo if you find it useful!
 
 </div>
+
