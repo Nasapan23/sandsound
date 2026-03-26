@@ -6,16 +6,20 @@ from concurrent.futures import Future
 import threading
 import time
 import queue
+import webbrowser
 import customtkinter as ctk
 from pathlib import Path
 from typing import Optional, List
 
+from .. import __version__
 from ..config import Config
 from ..database import SandSoundDatabase, extract_video_id
 from ..downloader import Downloader, DownloadProgress, DownloadStatus, VideoInfo
 from ..download_manager import DownloadManager, DownloadTask, AggregateProgress, TaskStatus
 from ..history import DownloadHistory
+from ..updater import AppUpdater, UpdateError, UpdateInfo
 from .async_utils import BackgroundTaskPool
+from .playlist_bar import build_playlist_bar_text
 from .components import UrlInput, FormatSelector, ProgressCard, Colors
 from .playlist_view import PlaylistViewDialog, PlaylistVideo, VideoStatus
 from .playlist_history import PlaylistHistoryDialog
@@ -57,6 +61,7 @@ class SandSoundApp(ctk.CTk):
         self._download_manager: Optional[DownloadManager] = None
         self._info_pool = BackgroundTaskPool(self.MAX_INFO_FETCH_WORKERS)
         self._download_pool = BackgroundTaskPool(1)
+        self._update_pool = BackgroundTaskPool(1)
         self._download_future: Optional[Future] = None
         self._is_closing = False
         self._is_downloading = False
@@ -68,6 +73,11 @@ class SandSoundApp(ctk.CTk):
         self._playlist_bar_visible = False
         self._info_request_token = 0
         self._entries_map: dict = {}  # For tracking entries during concurrent download
+        self._updater = AppUpdater(current_version=__version__)
+        self._available_update: Optional[UpdateInfo] = None
+        self._update_banner_visible = False
+        self._update_check_started = False
+        self._update_action_in_progress = False
         
         # UI update throttling
         self._progress_queue = queue.Queue(maxsize=10)
@@ -90,6 +100,7 @@ class SandSoundApp(ctk.CTk):
         
         # Start progress update scheduler
         self.after(100, self._schedule_progress_updates)
+        self.after(1200, self._check_for_updates_async)
 
     def _setup_window(self) -> None:
         """Configure main window."""
@@ -120,6 +131,9 @@ class SandSoundApp(ctk.CTk):
 
         # Header
         self._create_header()
+
+        # Update banner (hidden by default)
+        self._create_update_banner()
 
         # URL Input section
         self._create_url_section()
@@ -191,6 +205,75 @@ class SandSoundApp(ctk.CTk):
         )
         settings_btn.pack(side="left")
 
+    def _create_update_banner(self) -> None:
+        """Create the update notification banner."""
+        self._update_banner_host = ctk.CTkFrame(
+            self._container,
+            fg_color="transparent",
+        )
+        self._update_banner_host.pack(fill="x")
+
+        self._update_banner = ctk.CTkFrame(
+            self._update_banner_host,
+            corner_radius=12,
+            fg_color=("#FFF3CD", "#5C4813"),
+        )
+
+        inner = ctk.CTkFrame(self._update_banner, fg_color="transparent")
+        inner.pack(fill="both", expand=True, padx=16, pady=12)
+
+        self._update_label = ctk.CTkLabel(
+            inner,
+            text="",
+            font=("Segoe UI Semibold", 12),
+            text_color=("#856404", "#FFC107"),
+            justify="left",
+            wraplength=420,
+        )
+        self._update_label.pack(side="left", fill="x", expand=True, padx=(0, 12))
+
+        button_frame = ctk.CTkFrame(inner, fg_color="transparent")
+        button_frame.pack(side="right")
+
+        self._update_details_btn = ctk.CTkButton(
+            button_frame,
+            text="Release Notes",
+            width=110,
+            height=34,
+            corner_radius=8,
+            fg_color="transparent",
+            border_width=1,
+            text_color=Colors.TEXT_PRIMARY,
+            command=self._open_update_release_notes,
+        )
+        self._update_details_btn.pack(side="left", padx=(0, 8))
+
+        self._update_action_btn = ctk.CTkButton(
+            button_frame,
+            text="Update Now",
+            width=110,
+            height=34,
+            corner_radius=8,
+            fg_color=Colors.WARNING,
+            hover_color="#D97706",
+            text_color=Colors.TEXT_PRIMARY,
+            command=self._start_update_install,
+        )
+        self._update_action_btn.pack(side="left", padx=(0, 8))
+
+        self._update_later_btn = ctk.CTkButton(
+            button_frame,
+            text="Later",
+            width=72,
+            height=34,
+            corner_radius=8,
+            fg_color="transparent",
+            border_width=1,
+            text_color=Colors.TEXT_PRIMARY,
+            command=self._dismiss_update_banner,
+        )
+        self._update_later_btn.pack(side="left")
+
     def _create_url_section(self) -> None:
         """Create URL input section."""
         self._url_input = UrlInput(
@@ -217,21 +300,24 @@ class SandSoundApp(ctk.CTk):
         
         inner = ctk.CTkFrame(self._playlist_bar, fg_color="transparent")
         inner.pack(fill="both", expand=True, padx=15, pady=10)
+        inner.grid_columnconfigure(1, weight=1)
         
         self._playlist_icon = ctk.CTkLabel(
             inner,
             text="Playlist",
             font=("Segoe UI", 16),
         )
-        self._playlist_icon.pack(side="left", padx=(0, 10))
+        self._playlist_icon.grid(row=0, column=0, padx=(0, 10), sticky="w")
         
         self._playlist_info_label = ctk.CTkLabel(
             inner,
             text="Playlist detected",
             font=("Segoe UI", 13),
-            text_color=Colors.TEXT_SECONDARY
+            text_color=Colors.TEXT_SECONDARY,
+            anchor="w",
+            justify="left",
         )
-        self._playlist_info_label.pack(side="left")
+        self._playlist_info_label.grid(row=0, column=1, sticky="ew")
         
         self._view_playlist_btn = ctk.CTkButton(
             inner,
@@ -244,7 +330,7 @@ class SandSoundApp(ctk.CTk):
             corner_radius=8,
             command=self._open_playlist_view
         )
-        self._view_playlist_btn.pack(side="right")
+        self._view_playlist_btn.grid(row=0, column=2, padx=(12, 0), sticky="e")
 
     def _create_format_section(self) -> None:
         """Create format/quality selection section."""
@@ -417,16 +503,13 @@ class SandSoundApp(ctk.CTk):
                 if info.playlist_id and info.entries:
                     downloaded_ids = self._history.get_downloaded_video_ids(info.playlist_id)
                     new_count = sum(1 for e in info.entries if e.video_id not in downloaded_ids)
-                    total = len(info.entries)
-
-                    if new_count == total:
-                        text = f"Playlist: {info.title} ({total} videos)"
-                    else:
-                        text = f"Playlist: {info.title} ({new_count} new / {total} total)"
-
-                    self._playlist_info_label.configure(text=text)
+                    self._playlist_info_label.configure(
+                        text=build_playlist_bar_text(info, new_count=new_count)
+                    )
                 else:
-                    self._playlist_info_label.configure(text=f"Playlist: {info.title}")
+                    self._playlist_info_label.configure(
+                        text=build_playlist_bar_text(info)
+                    )
             else:
                 self._playlist_info_label.configure(text="Playlist detected")
 
@@ -435,6 +518,116 @@ class SandSoundApp(ctk.CTk):
                 self._playlist_bar_visible = True
         except Exception:
             pass
+
+    def _check_for_updates_async(self) -> None:
+        """Start a background update check."""
+        if self._is_closing or self._update_check_started:
+            return
+        self._update_check_started = True
+        self._update_pool.submit(self._check_for_updates_worker)
+
+    def _check_for_updates_worker(self) -> None:
+        """Check for updates without blocking the UI."""
+        update_info: Optional[UpdateInfo] = None
+        try:
+            update_info = self._updater.check_for_update()
+        except UpdateError as exc:
+            print(f"Update check skipped: {exc}")
+
+        self._schedule_on_ui(lambda: self._handle_update_check_result(update_info))
+
+    def _handle_update_check_result(self, update_info: Optional[UpdateInfo]) -> None:
+        """Apply update check results on the UI thread."""
+        if not update_info or self._is_closing:
+            return
+
+        self._available_update = update_info
+        action_text = (
+            "Update Now"
+            if update_info.asset and self._updater.can_replace_current_executable()
+            else "Open Release"
+        )
+        self._update_label.configure(
+            text=(
+                f"SandSound {update_info.version} is available. "
+                f"You are on {update_info.current_version}."
+            )
+        )
+        self._update_action_btn.configure(text=action_text, state="normal")
+        self._update_details_btn.configure(state="normal")
+        self._update_later_btn.configure(state="normal")
+
+        if not self._update_banner_visible:
+            self._update_banner.pack(fill="x", pady=(0, 12))
+            self._update_banner_visible = True
+
+    def _dismiss_update_banner(self) -> None:
+        """Hide the update banner until the next app launch."""
+        if self._update_action_in_progress:
+            return
+        if self._update_banner_visible and self._update_banner.winfo_exists():
+            self._update_banner.pack_forget()
+            self._update_banner_visible = False
+
+    def _open_update_release_notes(self) -> None:
+        """Open the current release page in the default browser."""
+        if self._available_update:
+            webbrowser.open(self._available_update.html_url)
+
+    def _start_update_install(self) -> None:
+        """Download and apply the latest packaged update when supported."""
+        if not self._available_update or self._update_action_in_progress:
+            return
+
+        if not (self._available_update.asset and self._updater.can_replace_current_executable()):
+            webbrowser.open(self._available_update.html_url)
+            return
+
+        if self._is_downloading:
+            self._update_label.configure(
+                text="Finish or cancel the current download before installing the update."
+            )
+            return
+
+        self._update_action_in_progress = True
+        self._update_label.configure(
+            text=f"Downloading SandSound {self._available_update.version}..."
+        )
+        self._update_action_btn.configure(text="Downloading...", state="disabled")
+        self._update_details_btn.configure(state="disabled")
+        self._update_later_btn.configure(state="disabled")
+        self._update_pool.submit(
+            self._download_and_apply_update_worker,
+            self._available_update,
+        )
+
+    def _download_and_apply_update_worker(self, update_info: UpdateInfo) -> None:
+        """Download the update and hand off installation to a helper script."""
+        try:
+            downloaded_path = self._updater.download_update(update_info)
+            self._updater.apply_downloaded_update(downloaded_path)
+        except UpdateError as exc:
+            self._schedule_on_ui(lambda: self._handle_update_failure(str(exc)))
+            return
+
+        self._schedule_on_ui(
+            lambda: self._finish_update_install(update_info.version),
+        )
+
+    def _handle_update_failure(self, error: str) -> None:
+        """Restore banner actions after an update failure."""
+        self._update_action_in_progress = False
+        self._update_label.configure(text=f"Update failed: {error}")
+        self._update_action_btn.configure(text="Update Now", state="normal")
+        self._update_details_btn.configure(state="normal")
+        self._update_later_btn.configure(state="normal")
+
+    def _finish_update_install(self, version: str) -> None:
+        """Close the app so the helper can replace the executable."""
+        self._update_label.configure(
+            text=f"Installing SandSound {version}. The app will restart."
+        )
+        self.after(300, self.destroy)
 
     def _open_playlist_view(self) -> None:
         """Open playlist view dialog."""
@@ -962,6 +1155,10 @@ class SandSoundApp(ctk.CTk):
                 pass
             try:
                 self._download_pool.shutdown(wait=False, cancel_futures=True)
+            except Exception:
+                pass
+            try:
+                self._update_pool.shutdown(wait=False, cancel_futures=True)
             except Exception:
                 pass
 

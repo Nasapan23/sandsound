@@ -6,6 +6,17 @@ The format is based on Keep a Changelog, and this project uses semantic versioni
 
 ## [Unreleased]
 
+## [1.0.5] - 2026-03-26
+
+### Added
+- Background GitHub release checks with in-app update notifications for packaged Windows builds.
+- Windows self-update flow that downloads the newest release, swaps the executable after exit, and restarts the app.
+- Unit tests covering updater behavior and playlist bar text formatting.
+
+### Fixed
+- Playlist info bar now keeps the `View Playlist` button visible when playlist titles are very long.
+- Playlist bar text is truncated cleanly instead of overrunning the action area.
+
 ## [1.0.4] - 2026-03-25
 
 ### Added
