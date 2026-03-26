@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-1.0.5-blue.svg)
+![Version](https://img.shields.io/badge/version-1.0.6-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.10+-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)
@@ -67,7 +67,7 @@ SandSound is a modern, open-source desktop application for downloading YouTube v
 
 Project history is tracked in [CHANGELOG.md](CHANGELOG.md).
 
-### Latest Release: v1.0.5
+### Latest Release: v1.0.6
 
 - Added SQLite-backed persistence for download history and metadata caching.
 - Added automatic migration from legacy `download_history.json` into `sandsound.db` with backup preservation.

@@ -207,14 +207,8 @@ class SandSoundApp(ctk.CTk):
 
     def _create_update_banner(self) -> None:
         """Create the update notification banner."""
-        self._update_banner_host = ctk.CTkFrame(
-            self._container,
-            fg_color="transparent",
-        )
-        self._update_banner_host.pack(fill="x")
-
         self._update_banner = ctk.CTkFrame(
-            self._update_banner_host,
+            self._container,
             corner_radius=12,
             fg_color=("#FFF3CD", "#5C4813"),
         )
@@ -285,14 +279,8 @@ class SandSoundApp(ctk.CTk):
 
     def _create_playlist_info_bar(self) -> None:
         """Create playlist info bar (shown when playlist detected)."""
-        self._playlist_bar_host = ctk.CTkFrame(
-            self._container,
-            fg_color="transparent",
-        )
-        self._playlist_bar_host.pack(fill="x")
-
         self._playlist_bar = ctk.CTkFrame(
-            self._playlist_bar_host,
+            self._container,
             fg_color=Colors.BG_CARD,
             corner_radius=10,
             height=50

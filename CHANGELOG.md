@@ -6,6 +6,12 @@ The format is based on Keep a Changelog, and this project uses semantic versioni
 
 ## [Unreleased]
 
+## [1.0.6] - 2026-03-26
+
+### Fixed
+- Removed hidden placeholder frames that were reserving vertical space and pushing the whole UI downward.
+- Update and playlist banners now only take space when visible, restoring the expected startup layout.
+
 ## [1.0.5] - 2026-03-26
 
 ### Added
