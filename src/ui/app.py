@@ -14,13 +14,13 @@ from typing import Optional, List
 from .. import __version__
 from ..config import Config
 from ..database import SandSoundDatabase, extract_video_id
-from ..downloader import Downloader, DownloadProgress, DownloadStatus, VideoInfo
+from ..downloader import Downloader, DownloadProgress, DownloadStatus, SearchResult, VideoInfo
 from ..download_manager import DownloadManager, DownloadTask, AggregateProgress, TaskStatus
 from ..history import DownloadHistory
 from ..updater import AppUpdater, UpdateError, UpdateInfo
 from .async_utils import BackgroundTaskPool
 from .playlist_bar import build_playlist_bar_text
-from .components import UrlInput, FormatSelector, ProgressCard, Colors
+from .components import UrlInput, FormatSelector, ProgressCard, Colors, SearchPanel
 from .playlist_view import PlaylistViewDialog, PlaylistVideo, VideoStatus
 from .playlist_history import PlaylistHistoryDialog
 from .settings import SettingsDialog
@@ -32,6 +32,7 @@ class SandSoundApp(ctk.CTk):
     URL_CACHE_MAX_AGE_SECONDS = 6 * 60 * 60
     PLAYLIST_DIALOG_CACHE_MAX_AGE_SECONDS = 15 * 60
     MAX_INFO_FETCH_WORKERS = 2
+    SEARCH_RESULTS_LIMIT = 4
 
     def __init__(self, config: Config) -> None:
         super().__init__()
@@ -66,12 +67,14 @@ class SandSoundApp(ctk.CTk):
         self._is_closing = False
         self._is_downloading = False
         self._cancel_event: Optional[threading.Event] = None
+        self._clear_url_after_download = True
         self._current_video_info: Optional[VideoInfo] = None
         self._pending_playlist_url: Optional[str] = None
         self._playlist_fetch_in_progress = False
         self._playlist_dialog: Optional[PlaylistViewDialog] = None
         self._playlist_bar_visible = False
         self._info_request_token = 0
+        self._search_request_token = 0
         self._entries_map: dict = {}  # For tracking entries during concurrent download
         self._updater = AppUpdater(current_version=__version__)
         self._available_update: Optional[UpdateInfo] = None
@@ -105,8 +108,8 @@ class SandSoundApp(ctk.CTk):
     def _setup_window(self) -> None:
         """Configure main window."""
         self.title("SandSound - YouTube Downloader")
-        self.geometry("700x600")
-        self.minsize(600, 550)
+        self.geometry("760x720")
+        self.minsize(640, 650)
         self.protocol("WM_DELETE_WINDOW", self.destroy)
 
         # Center window on screen (use after to avoid blocking)
@@ -135,8 +138,12 @@ class SandSoundApp(ctk.CTk):
         # Update banner (hidden by default)
         self._create_update_banner()
 
-        # URL Input section
+        # Mode and input sections
+        self._create_mode_selector()
+        self._input_container = ctk.CTkFrame(self._container, fg_color="transparent")
+        self._input_container.pack(fill="x", pady=(0, 12))
         self._create_url_section()
+        self._create_search_section()
 
         # Playlist info bar (hidden by default)
         self._create_playlist_info_bar()
@@ -268,14 +275,52 @@ class SandSoundApp(ctk.CTk):
         )
         self._update_later_btn.pack(side="left")
 
+    def _create_mode_selector(self) -> None:
+        """Create URL/Search mode switch."""
+        mode_frame = ctk.CTkFrame(self._container, fg_color="transparent")
+        mode_frame.pack(fill="x", pady=(0, 12))
+
+        label = ctk.CTkLabel(
+            mode_frame,
+            text="Mode",
+            font=("Segoe UI Semibold", 13),
+            text_color=Colors.TEXT_SECONDARY,
+        )
+        label.pack(side="left")
+
+        self._mode_var = ctk.StringVar(value="URL")
+        self._mode_selector = ctk.CTkSegmentedButton(
+            mode_frame,
+            values=["URL", "Search"],
+            variable=self._mode_var,
+            command=self._on_mode_change,
+            font=("Segoe UI Semibold", 13),
+            fg_color=Colors.BG_INPUT,
+            selected_color=Colors.PRIMARY,
+            selected_hover_color=Colors.PRIMARY_DARK,
+            unselected_color=Colors.BG_INPUT,
+            unselected_hover_color=Colors.BG_CARD_HOVER,
+            corner_radius=10,
+            height=38,
+        )
+        self._mode_selector.pack(side="right")
+
     def _create_url_section(self) -> None:
         """Create URL input section."""
         self._url_input = UrlInput(
-            self._container,
+            self._input_container,
             validate_callback=self._on_url_validate,
             on_submit=lambda url: self._start_download(),
         )
-        self._url_input.pack(fill="x", pady=(0, 12))
+        self._url_input.pack(fill="x")
+
+    def _create_search_section(self) -> None:
+        """Create YouTube search mode panel."""
+        self._search_panel = SearchPanel(
+            self._input_container,
+            on_search=self._start_search,
+            on_download=self._start_search_download,
+        )
 
     def _create_playlist_info_bar(self) -> None:
         """Create playlist info bar (shown when playlist detected)."""
@@ -322,12 +367,12 @@ class SandSoundApp(ctk.CTk):
 
     def _create_format_section(self) -> None:
         """Create format/quality selection section."""
-        format_label = ctk.CTkLabel(
+        self._format_label = ctk.CTkLabel(
             self._container,
             text="Output Format",
             font=("Segoe UI", 13, "bold"),
         )
-        format_label.pack(anchor="w", pady=(0, 8))
+        self._format_label.pack(anchor="w", pady=(0, 8))
 
         self._format_selector = FormatSelector(self._container)
         self._format_selector.pack(fill="x", pady=(0, 20))
@@ -396,6 +441,43 @@ class SandSoundApp(ctk.CTk):
         except Exception:
             return False
 
+    def _on_mode_change(self, value: str) -> None:
+        """Switch between direct URL and search workflows."""
+        if value == "Search":
+            self._info_request_token += 1
+            self._current_video_info = None
+            self._pending_playlist_url = None
+            self._hide_playlist_bar()
+            self._url_input.pack_forget()
+            if not self._search_panel.winfo_manager():
+                self._search_panel.pack(fill="x")
+            self._search_panel.set_download_enabled(not self._is_downloading)
+            self._set_download_button_visible(self._is_downloading)
+            return
+
+        self._search_request_token += 1
+        self._search_panel.pack_forget()
+        if not self._url_input.winfo_manager():
+            self._url_input.pack(fill="x")
+        self._set_download_button_visible(True)
+        url = self._url_input.get_url()
+        if url and Downloader.is_valid_url(url):
+            self._on_url_validate(url)
+
+    def _set_download_button_visible(self, visible: bool) -> None:
+        """Show or hide the global download/cancel button."""
+        try:
+            is_visible = bool(self._download_btn.winfo_manager())
+            if visible and not is_visible:
+                if hasattr(self, "_progress_card"):
+                    self._download_btn.pack(fill="x", pady=(0, 25), before=self._progress_card)
+                else:
+                    self._download_btn.pack(fill="x", pady=(0, 25))
+            elif not visible and is_visible:
+                self._download_btn.pack_forget()
+        except Exception:
+            pass
+
     def _on_url_validate(self, url: str) -> bool:
         """Validate URL and fetch info if playlist."""
         is_valid = Downloader.is_valid_url(url)
@@ -410,7 +492,7 @@ class SandSoundApp(ctk.CTk):
         cached_info = self._downloader.get_cached_video_info(url)
         if cached_info:
             self._apply_video_info(cached_info, url=url, token=token)
-        elif "playlist" in url.lower():
+        elif Downloader.is_playlist_url(url):
             self._pending_playlist_url = url
             self._show_playlist_bar(None)
         else:
@@ -448,7 +530,7 @@ class SandSoundApp(ctk.CTk):
             self._show_playlist_bar(info)
             return
 
-        if "playlist" in url.lower():
+        if Downloader.is_playlist_url(url):
             self._pending_playlist_url = url
             if info is None:
                 self._show_playlist_bar(None)
@@ -473,6 +555,79 @@ class SandSoundApp(ctk.CTk):
 
         self._schedule_on_ui(
             lambda: self._apply_video_info(info, url=url, token=token),
+        )
+
+    def _next_search_request_token(self) -> int:
+        """Issue a token for the latest search request."""
+        self._search_request_token += 1
+        return self._search_request_token
+
+    def _is_current_search_request(self, token: int, query: str) -> bool:
+        """Check whether a search response still matches the visible query."""
+        return (
+            not self._is_closing
+            and token == self._search_request_token
+            and self.winfo_exists()
+            and self._search_panel.get_query() == query
+        )
+
+    def _start_search(self, query: str) -> None:
+        """Start a YouTube search in the background."""
+        query = query.strip()
+        if not query:
+            self._search_panel.set_error("Enter a search query")
+            return
+
+        token = self._next_search_request_token()
+        self._search_panel.set_loading(True)
+        self._info_pool.submit(self._search_worker, query, token)
+
+    def _search_worker(self, query: str, token: int) -> None:
+        """Run YouTube search off the UI thread."""
+        try:
+            results = self._downloader.search_videos(
+                query,
+                max_results=self.SEARCH_RESULTS_LIMIT,
+            )
+        except Exception:
+            results = []
+
+        self._schedule_on_ui(
+            lambda: self._apply_search_results(query, token, results),
+        )
+
+    def _apply_search_results(
+        self,
+        query: str,
+        token: int,
+        results: List[SearchResult],
+    ) -> None:
+        """Render search results if the response is still current."""
+        if not self._is_current_search_request(token, query):
+            return
+        self._search_panel.show_results(results)
+        self._search_panel.set_download_enabled(not self._is_downloading)
+
+    def _start_search_download(self, result: SearchResult) -> None:
+        """Download a video selected from search results."""
+        if self._is_downloading:
+            return
+        if not result.url:
+            self._search_panel.set_error("Selected result does not have a download URL")
+            return
+
+        self._search_panel.set_download_enabled(False)
+        self._progress_card.update_progress(
+            title=result.title,
+            status="Preparing download...",
+            progress=0.0,
+            speed="",
+            eta="",
+        )
+        self._begin_single_download(
+            result.url,
+            clear_url_after_download=False,
+            known_title=result.title,
         )
 
     def _hide_playlist_bar(self) -> None:
@@ -502,10 +657,21 @@ class SandSoundApp(ctk.CTk):
                 self._playlist_info_label.configure(text="Playlist detected")
 
             if not self._playlist_bar_visible:
-                self._playlist_bar.pack(fill="x", pady=(0, 12))
                 self._playlist_bar_visible = True
+            self._pack_playlist_bar()
         except Exception:
             pass
+
+    def _pack_playlist_bar(self) -> None:
+        """Place playlist bar directly above the format controls."""
+        pack_kwargs = {"fill": "x", "pady": (0, 12)}
+        if hasattr(self, "_format_label") and self._format_label.winfo_exists():
+            pack_kwargs["before"] = self._format_label
+        try:
+            self._playlist_bar.pack_forget()
+        except Exception:
+            pass
+        self._playlist_bar.pack(**pack_kwargs)
 
     def _check_for_updates_async(self) -> None:
         """Start a background update check."""
@@ -898,13 +1064,28 @@ class SandSoundApp(ctk.CTk):
             return
 
         # If it's a playlist, open playlist view instead
-        if "playlist" in url.lower() or (self._current_video_info and self._current_video_info.is_playlist):
+        if Downloader.is_playlist_url(url) or (self._current_video_info and self._current_video_info.is_playlist):
             self._pending_playlist_url = url
             self._open_playlist_view()
             return
 
+        self._begin_single_download(
+            url,
+            clear_url_after_download=True,
+        )
+
+    def _begin_single_download(
+        self,
+        url: str,
+        *,
+        clear_url_after_download: bool,
+        known_title: Optional[str] = None,
+    ) -> None:
+        """Start a single video download after the URL has been resolved."""
         self._is_downloading = True
+        self._clear_url_after_download = clear_url_after_download
         self._cancel_event = threading.Event()
+        self._set_download_button_visible(True)
         self._download_btn.configure(
             state="normal",
             text="Cancel Download",
@@ -921,9 +1102,16 @@ class SandSoundApp(ctk.CTk):
             url,
             format_type,
             quality,
+            known_title,
         )
 
-    def _download_worker(self, url: str, format_type: str, quality: str) -> None:
+    def _download_worker(
+        self,
+        url: str,
+        format_type: str,
+        quality: str,
+        known_title: Optional[str] = None,
+    ) -> None:
         """Download worker thread."""
         def progress_callback(progress: DownloadProgress) -> None:
             # Throttle UI updates - only queue if enough time has passed
@@ -953,7 +1141,7 @@ class SandSoundApp(ctk.CTk):
                 cached_info = self._downloader.get_cached_video_info(url)
                 self._history.add_video_download(
                     video_id=video_id,
-                    title=cached_info.title if cached_info else video_id,
+                    title=known_title or (cached_info.title if cached_info else video_id),
                     format_type=format_type,
                     quality=quality,
                 )
@@ -1106,11 +1294,17 @@ class SandSoundApp(ctk.CTk):
 
     def _download_complete(self) -> None:
         """Reset UI after download completes."""
+        clear_url = self._clear_url_after_download
         self._is_downloading = False
         self._download_future = None
         self._cancel_event = None
+        self._clear_url_after_download = True
         self._reset_download_button()
-        self._url_input.clear()
+        if clear_url:
+            self._url_input.clear()
+        self._search_panel.set_download_enabled(True)
+        if self._mode_var.get() == "Search":
+            self._set_download_button_visible(False)
 
     def _reset_download_button(self) -> None:
         """Reset download button to default state."""

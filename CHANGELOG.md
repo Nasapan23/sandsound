@@ -6,6 +6,10 @@ The format is based on Keep a Changelog, and this project uses semantic versioni
 
 ## [Unreleased]
 
+### Added
+- Added a Search mode for live use: search YouTube from the app, review the top 4 video results, and download the selected result through the existing format/progress flow.
+- Search results now show thumbnails and wrap result text to avoid cropped titles or metadata.
+
 ## [1.0.6] - 2026-03-26
 
 ### Fixed

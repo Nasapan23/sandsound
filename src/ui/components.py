@@ -3,10 +3,16 @@ Premium reusable UI components for SandSound.
 Modern design with animations, gradients, and polished aesthetics.
 """
 
+from io import BytesIO
+import threading
+from urllib.request import Request, urlopen
+
 import customtkinter as ctk
-from typing import Callable, Optional, List
+from typing import Any, Callable, Optional, List
 from dataclasses import dataclass
 from enum import Enum
+
+from PIL import Image, ImageOps
 
 from .async_utils import DebouncedCallback
 
@@ -226,6 +232,351 @@ class UrlInput(ctk.CTkFrame):
     def is_valid(self) -> bool:
         """Check if current URL is valid."""
         return self._is_valid
+
+
+class SearchResultRow(ctk.CTkFrame):
+    """Single selectable YouTube search result."""
+
+    THUMBNAIL_SIZE = (112, 63)
+
+    def __init__(
+        self,
+        master: ctk.CTkFrame,
+        result: Any,
+        index: int,
+        on_download: Callable[[Any], None],
+        **kwargs,
+    ) -> None:
+        super().__init__(
+            master,
+            fg_color=Colors.BG_INPUT if index % 2 == 0 else Colors.BG_CARD_HOVER,
+            corner_radius=10,
+            height=92,
+            **kwargs,
+        )
+
+        self._result = result
+        self._on_download = on_download
+        self._thumbnail_image: Optional[ctk.CTkImage] = None
+
+        inner = ctk.CTkFrame(self, fg_color="transparent")
+        inner.pack(fill="both", expand=True, padx=12, pady=10)
+        inner.grid_columnconfigure(2, weight=1)
+
+        index_label = ctk.CTkLabel(
+            inner,
+            text=str(index + 1),
+            width=28,
+            font=("Segoe UI Semibold", 13),
+            text_color=Colors.PRIMARY_LIGHT,
+        )
+        index_label.grid(row=0, column=0, padx=(0, 10), sticky="w")
+
+        self._thumbnail_label = ctk.CTkLabel(
+            inner,
+            text="",
+            width=self.THUMBNAIL_SIZE[0],
+            height=self.THUMBNAIL_SIZE[1],
+            fg_color=Colors.BG_CARD,
+            corner_radius=8,
+        )
+        self._thumbnail_label.grid(row=0, column=1, padx=(0, 12), sticky="w")
+
+        text_frame = ctk.CTkFrame(inner, fg_color="transparent")
+        text_frame.grid(row=0, column=2, sticky="nsew", padx=(0, 12))
+        text_frame.grid_columnconfigure(0, weight=1)
+        text_frame.bind("<Configure>", self._on_text_frame_resize)
+
+        title = getattr(result, "title", "Untitled video")
+        self._title_label = ctk.CTkLabel(
+            text_frame,
+            text=title,
+            font=("Segoe UI Semibold", 13),
+            text_color=Colors.TEXT_PRIMARY,
+            anchor="w",
+            justify="left",
+            wraplength=360,
+        )
+        self._title_label.grid(row=0, column=0, sticky="ew")
+
+        self._meta_label = ctk.CTkLabel(
+            text_frame,
+            text=self._build_meta_text(result),
+            font=("Segoe UI", 11),
+            text_color=Colors.TEXT_MUTED,
+            anchor="w",
+            justify="left",
+            wraplength=360,
+        )
+        self._meta_label.grid(row=1, column=0, sticky="ew", pady=(5, 0))
+
+        self._download_btn = ctk.CTkButton(
+            inner,
+            text="Download",
+            width=98,
+            height=32,
+            font=("Segoe UI Semibold", 12),
+            fg_color=Colors.PRIMARY,
+            hover_color=Colors.PRIMARY_DARK,
+            text_color=Colors.TEXT_PRIMARY,
+            corner_radius=8,
+            command=self._download,
+        )
+        self._download_btn.grid(row=0, column=3, sticky="e")
+
+        self._start_thumbnail_load(getattr(result, "thumbnail", None))
+
+    def _download(self) -> None:
+        """Start download for this result."""
+        self._on_download(self._result)
+
+    def set_download_enabled(self, enabled: bool) -> None:
+        """Enable or disable this row's download button."""
+        self._download_btn.configure(state="normal" if enabled else "disabled")
+
+    def _on_text_frame_resize(self, event) -> None:
+        """Keep wrapped labels inside the available text area."""
+        wraplength = max(180, event.width - 4)
+        self._title_label.configure(wraplength=wraplength)
+        self._meta_label.configure(wraplength=wraplength)
+
+    def _start_thumbnail_load(self, thumbnail_url: Optional[str]) -> None:
+        """Load the thumbnail without blocking the UI thread."""
+        if not thumbnail_url:
+            return
+        thread = threading.Thread(
+            target=self._thumbnail_worker,
+            args=(thumbnail_url,),
+            daemon=True,
+        )
+        thread.start()
+
+    def _thumbnail_worker(self, thumbnail_url: str) -> None:
+        """Fetch and resize a thumbnail in the background."""
+        try:
+            request = Request(
+                thumbnail_url,
+                headers={"User-Agent": "SandSound/1.0"},
+            )
+            with urlopen(request, timeout=8) as response:
+                image_data = response.read(2_000_000)
+            image = Image.open(BytesIO(image_data)).convert("RGB")
+            image = ImageOps.fit(
+                image,
+                self.THUMBNAIL_SIZE,
+                method=Image.Resampling.LANCZOS,
+            )
+        except Exception:
+            return
+
+        try:
+            self.after(0, lambda: self._set_thumbnail(image))
+        except Exception:
+            pass
+
+    def _set_thumbnail(self, image: Image.Image) -> None:
+        """Apply a loaded thumbnail on the Tk thread."""
+        try:
+            if not self.winfo_exists():
+                return
+            self._thumbnail_image = ctk.CTkImage(
+                light_image=image,
+                dark_image=image,
+                size=self.THUMBNAIL_SIZE,
+            )
+            self._thumbnail_label.configure(image=self._thumbnail_image, text="")
+        except Exception:
+            pass
+
+    @classmethod
+    def _build_meta_text(cls, result: Any) -> str:
+        """Build uploader and duration metadata."""
+        parts = []
+        uploader = getattr(result, "uploader", None)
+        duration = getattr(result, "duration", None)
+        if uploader:
+            parts.append(str(uploader))
+        if duration:
+            parts.append(cls._format_duration(duration))
+        return " | ".join(parts) if parts else "YouTube result"
+
+    @staticmethod
+    def _format_duration(seconds: int) -> str:
+        """Format seconds to MM:SS or HH:MM:SS."""
+        if seconds >= 3600:
+            hours = seconds // 3600
+            mins = (seconds % 3600) // 60
+            secs = seconds % 60
+            return f"{hours}:{mins:02d}:{secs:02d}"
+        mins = seconds // 60
+        secs = seconds % 60
+        return f"{mins}:{secs:02d}"
+
+
+class SearchPanel(ctk.CTkFrame):
+    """Search input and compact result picker for live downloads."""
+
+    def __init__(
+        self,
+        master: ctk.CTk,
+        on_search: Callable[[str], None],
+        on_download: Callable[[Any], None],
+        **kwargs,
+    ) -> None:
+        super().__init__(
+            master,
+            fg_color=Colors.BG_CARD,
+            corner_radius=16,
+            **kwargs,
+        )
+
+        self._on_search = on_search
+        self._on_download = on_download
+        self._rows: List[SearchResultRow] = []
+        self._download_enabled = True
+
+        inner = ctk.CTkFrame(self, fg_color="transparent")
+        inner.pack(fill="both", expand=True, padx=20, pady=16)
+
+        label_row = ctk.CTkFrame(inner, fg_color="transparent")
+        label_row.pack(fill="x", pady=(0, 10))
+
+        label = ctk.CTkLabel(
+            label_row,
+            text="YouTube Search",
+            font=("Segoe UI Semibold", 13),
+            text_color=Colors.TEXT_SECONDARY,
+        )
+        label.pack(side="left")
+
+        self._status_label = ctk.CTkLabel(
+            label_row,
+            text="Top 4 results",
+            font=("Segoe UI", 12),
+            text_color=Colors.TEXT_MUTED,
+        )
+        self._status_label.pack(side="right")
+
+        input_row = ctk.CTkFrame(inner, fg_color="transparent")
+        input_row.pack(fill="x")
+
+        entry_frame = ctk.CTkFrame(
+            input_row,
+            fg_color=Colors.BG_INPUT,
+            corner_radius=12,
+        )
+        entry_frame.pack(side="left", fill="x", expand=True, padx=(0, 12))
+
+        self._entry = ctk.CTkEntry(
+            entry_frame,
+            placeholder_text="Search artist, title, remix, label...",
+            height=48,
+            font=("Segoe UI", 14),
+            corner_radius=12,
+            border_width=0,
+            fg_color="transparent",
+            text_color=Colors.TEXT_PRIMARY,
+            placeholder_text_color=Colors.TEXT_MUTED,
+        )
+        self._entry.pack(fill="x", padx=4, pady=2)
+        self._entry.bind("<Return>", lambda _event: self._trigger_search())
+
+        self._search_btn = ctk.CTkButton(
+            input_row,
+            text="Search",
+            width=96,
+            height=48,
+            font=("Segoe UI Semibold", 13),
+            corner_radius=12,
+            fg_color=Colors.PRIMARY,
+            hover_color=Colors.PRIMARY_DARK,
+            text_color=Colors.TEXT_PRIMARY,
+            command=self._trigger_search,
+        )
+        self._search_btn.pack(side="right")
+
+        self._results_frame = ctk.CTkFrame(inner, fg_color="transparent")
+        self._results_frame.pack(fill="x", pady=(14, 0))
+
+        self._empty_label = ctk.CTkLabel(
+            self._results_frame,
+            text="Search to pick a result before downloading.",
+            font=("Segoe UI", 12),
+            text_color=Colors.TEXT_MUTED,
+        )
+        self._empty_label.pack(fill="x", pady=8)
+
+    def _trigger_search(self) -> None:
+        """Run search for the current query."""
+        query = self.get_query()
+        if not query:
+            self.set_error("Enter a search query")
+            return
+        self._on_search(query)
+
+    def get_query(self) -> str:
+        """Return the current search query."""
+        return self._entry.get().strip()
+
+    def set_loading(self, loading: bool) -> None:
+        """Set loading state while search runs."""
+        if loading:
+            self._search_btn.configure(text="Searching...", state="disabled")
+            self._status_label.configure(text="Searching", text_color=Colors.PRIMARY_LIGHT)
+            self._clear_result_rows()
+            self._empty_label.configure(text="Searching YouTube...")
+            self._empty_label.pack(fill="x", pady=8)
+            return
+
+        self._search_btn.configure(text="Search", state="normal")
+
+    def show_results(self, results: List[Any]) -> None:
+        """Render search results."""
+        self._clear_result_rows()
+        self._search_btn.configure(text="Search", state="normal")
+
+        if not results:
+            self._status_label.configure(text="No results", text_color=Colors.WARNING)
+            self._empty_label.configure(text="No results found.")
+            self._empty_label.pack(fill="x", pady=8)
+            return
+
+        self._status_label.configure(
+            text=f"{len(results)} result{'s' if len(results) != 1 else ''}",
+            text_color=Colors.SUCCESS,
+        )
+        self._empty_label.pack_forget()
+
+        for index, result in enumerate(results):
+            row = SearchResultRow(
+                self._results_frame,
+                result=result,
+                index=index,
+                on_download=self._on_download,
+            )
+            row.set_download_enabled(self._download_enabled)
+            row.pack(fill="x", pady=(0, 8))
+            self._rows.append(row)
+
+    def set_error(self, message: str) -> None:
+        """Show an inline search error."""
+        self._clear_result_rows()
+        self._search_btn.configure(text="Search", state="normal")
+        self._status_label.configure(text="Error", text_color=Colors.ERROR)
+        self._empty_label.configure(text=message)
+        self._empty_label.pack(fill="x", pady=8)
+
+    def set_download_enabled(self, enabled: bool) -> None:
+        """Enable or disable result download actions."""
+        self._download_enabled = enabled
+        for row in self._rows:
+            row.set_download_enabled(enabled)
+
+    def _clear_result_rows(self) -> None:
+        """Remove rendered result rows."""
+        for row in self._rows:
+            row.destroy()
+        self._rows.clear()
 
 
 class FormatSelector(ctk.CTkFrame):

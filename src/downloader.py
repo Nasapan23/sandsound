@@ -12,6 +12,7 @@ from enum import Enum
 from io import StringIO
 from pathlib import Path
 from typing import Callable, List, Optional
+from urllib.parse import parse_qs, urlparse
 
 import yt_dlp
 from yt_dlp.utils import DownloadCancelled
@@ -49,6 +50,17 @@ class PlaylistItem:
     duration: Optional[int] = None
     thumbnail: Optional[str] = None
     url: Optional[str] = None
+
+
+@dataclass
+class SearchResult:
+    """Information about a YouTube search result."""
+    video_id: str
+    title: str
+    duration: Optional[int] = None
+    thumbnail: Optional[str] = None
+    url: Optional[str] = None
+    uploader: Optional[str] = None
 
 
 @dataclass
@@ -384,6 +396,130 @@ class Downloader:
         except Exception:
             return None
 
+    @staticmethod
+    def _extract_search_video_id(entry: dict) -> Optional[str]:
+        """Extract a YouTube video ID from a yt-dlp search entry."""
+        candidates = [
+            entry.get("id"),
+            entry.get("display_id"),
+            entry.get("url"),
+            entry.get("webpage_url"),
+        ]
+        for candidate in candidates:
+            if not candidate:
+                continue
+            value = str(candidate)
+            if re.fullmatch(r"[\w-]{11}", value):
+                return value
+            match = re.search(r"(?:v=|youtu\.be/|shorts/)([\w-]{11})", value)
+            if match:
+                return match.group(1)
+        return None
+
+    @staticmethod
+    def _extract_search_thumbnail(entry: dict) -> Optional[str]:
+        """Return the best available thumbnail URL from a yt-dlp entry."""
+        thumbnail = entry.get("thumbnail")
+        if thumbnail:
+            return thumbnail
+
+        thumbnails = entry.get("thumbnails")
+        if isinstance(thumbnails, list):
+            for candidate in reversed(thumbnails):
+                if not isinstance(candidate, dict):
+                    continue
+                url = candidate.get("url")
+                if url:
+                    return url
+        return None
+
+    @staticmethod
+    def _coerce_duration(value) -> Optional[int]:
+        """Normalize yt-dlp duration values."""
+        if value is None:
+            return None
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed >= 0 else None
+
+    @classmethod
+    def _build_search_results(cls, info: Optional[dict], max_results: int) -> List[SearchResult]:
+        """Convert yt-dlp search metadata into SearchResult objects."""
+        if not info:
+            return []
+
+        entries = info.get("entries") or []
+        results: List[SearchResult] = []
+
+        for entry in entries:
+            if not entry:
+                continue
+
+            video_id = cls._extract_search_video_id(entry)
+            raw_url = entry.get("webpage_url") or entry.get("original_url") or entry.get("url")
+            url = raw_url if isinstance(raw_url, str) and raw_url.startswith("http") else None
+            if video_id and not url:
+                url = f"https://www.youtube.com/watch?v={video_id}"
+            if not video_id or not url:
+                continue
+
+            results.append(
+                SearchResult(
+                    video_id=video_id,
+                    title=entry.get("title") or "Untitled video",
+                    duration=cls._coerce_duration(entry.get("duration")),
+                    thumbnail=(
+                        cls._extract_search_thumbnail(entry)
+                        or f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg"
+                    ),
+                    url=url,
+                    uploader=entry.get("uploader") or entry.get("channel"),
+                )
+            )
+
+            if len(results) >= max_results:
+                break
+
+        return results
+
+    def search_videos(self, query: str, max_results: int = 4) -> List[SearchResult]:
+        """
+        Search YouTube and return a small list of video results.
+
+        Args:
+            query: Search text to send through yt-dlp's YouTube search extractor.
+            max_results: Maximum number of results to return.
+
+        Returns:
+            List of SearchResult objects. Empty if search fails.
+        """
+        query = query.strip()
+        if not query:
+            return []
+
+        try:
+            max_results = int(max_results)
+        except (TypeError, ValueError):
+            max_results = 4
+        max_results = min(max(max_results, 1), 10)
+
+        opts = self._get_base_options(playlist_title=None)
+        opts["extract_flat"] = True
+        opts["skip_download"] = True
+
+        try:
+            with self._suppress_stderr():
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    info = ydl.extract_info(
+                        f"ytsearch{max_results}:{query}",
+                        download=False,
+                    )
+            return self._build_search_results(info, max_results)
+        except Exception:
+            return []
+
     def get_video_info(
         self,
         url: str,
@@ -714,3 +850,22 @@ class Downloader:
             if re.match(pattern, url):
                 return True
         return False
+
+    @staticmethod
+    def is_playlist_url(url: str) -> bool:
+        """Check whether a YouTube URL points to a playlist."""
+        parsed = urlparse(url.strip())
+        netloc = parsed.netloc.lower()
+        path = parsed.path.strip("/")
+        query = parse_qs(parsed.query)
+
+        if not netloc and re.match(r"^(www\.|music\.|m\.)?youtube\.com/", url.strip(), re.IGNORECASE):
+            parsed = urlparse(f"https://{url.strip()}")
+            netloc = parsed.netloc.lower()
+            path = parsed.path.strip("/")
+            query = parse_qs(parsed.query)
+
+        if netloc not in {"youtube.com", "www.youtube.com", "music.youtube.com", "m.youtube.com"}:
+            return False
+
+        return path == "playlist" and bool(query.get("list"))

@@ -172,6 +172,13 @@ FFmpeg is required for audio conversion. You have two options:
 3. Select your preferred format and quality
 4. Click "Download" or press Enter
 
+### Search Mode
+
+1. Switch the mode selector from "URL" to "Search"
+2. Search by artist, track title, remix, or label
+3. Review the top 4 YouTube results
+4. Click "Download" on the result you want
+
 ### Playlist Downloads
 
 1. Paste a playlist URL
