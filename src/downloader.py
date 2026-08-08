@@ -314,7 +314,7 @@ class Downloader:
             PlaylistItem(
                 video_id=entry.get("video_id", ""),
                 title=entry.get("title", "Unknown"),
-                duration=entry.get("duration"),
+                duration=self._coerce_duration(entry.get("duration")),
                 thumbnail=entry.get("thumbnail"),
                 url=entry.get("url"),
             )
@@ -324,7 +324,7 @@ class Downloader:
         return VideoInfo(
             url=payload.get("url", ""),
             title=payload.get("title", "Unknown"),
-            duration=payload.get("duration"),
+            duration=self._coerce_duration(payload.get("duration")),
             thumbnail=payload.get("thumbnail"),
             is_playlist=bool(payload.get("is_playlist")),
             playlist_count=payload.get("playlist_count", len(entries) or 1),
@@ -376,7 +376,7 @@ class Downloader:
                                 PlaylistItem(
                                     video_id=video_id,
                                     title=entry.get("title", "Unknown"),
-                                    duration=entry.get("duration"),
+                                    duration=self._coerce_duration(entry.get("duration")),
                                     thumbnail=entry.get("thumbnail"),
                                     url=f"https://www.youtube.com/watch?v={video_id}",
                                 )
@@ -385,7 +385,7 @@ class Downloader:
                     return VideoInfo(
                         url=url,
                         title=info.get("title", "Unknown"),
-                        duration=info.get("duration"),
+                        duration=self._coerce_duration(info.get("duration")),
                         thumbnail=info.get("thumbnail"),
                         is_playlist=is_playlist,
                         playlist_count=len(entries) if entries else 1,
@@ -439,8 +439,8 @@ class Downloader:
         if value is None:
             return None
         try:
-            parsed = int(value)
-        except (TypeError, ValueError):
+            parsed = int(float(value))
+        except (TypeError, ValueError, OverflowError):
             return None
         return parsed if parsed >= 0 else None
 
@@ -854,18 +854,34 @@ class Downloader:
     @staticmethod
     def is_playlist_url(url: str) -> bool:
         """Check whether a YouTube URL points to a playlist."""
-        parsed = urlparse(url.strip())
+        normalized_url = url.strip()
+        parsed = urlparse(normalized_url)
         netloc = parsed.netloc.lower()
         path = parsed.path.strip("/")
         query = parse_qs(parsed.query)
 
-        if not netloc and re.match(r"^(www\.|music\.|m\.)?youtube\.com/", url.strip(), re.IGNORECASE):
-            parsed = urlparse(f"https://{url.strip()}")
+        if not netloc and re.match(
+            r"^((www\.|music\.|m\.)?youtube\.com|youtu\.be)/",
+            normalized_url,
+            re.IGNORECASE,
+        ):
+            parsed = urlparse(f"https://{normalized_url}")
             netloc = parsed.netloc.lower()
             path = parsed.path.strip("/")
             query = parse_qs(parsed.query)
 
-        if netloc not in {"youtube.com", "www.youtube.com", "music.youtube.com", "m.youtube.com"}:
+        youtube_hosts = {
+            "youtube.com",
+            "www.youtube.com",
+            "music.youtube.com",
+            "m.youtube.com",
+            "youtu.be",
+        }
+        if netloc not in youtube_hosts:
             return False
 
-        return path == "playlist" and bool(query.get("list"))
+        return bool(query.get("list")) and (
+            path == "playlist"
+            or path == "watch"
+            or netloc == "youtu.be"
+        )

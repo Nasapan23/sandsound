@@ -93,6 +93,19 @@ class SlowDownloader:
 
 
 class DownloadManagerTests(unittest.TestCase):
+    def test_empty_batch_completes_without_starting_executor(self) -> None:
+        complete = threading.Event()
+        manager = DownloadManager(
+            downloader=FakeDownloader(),
+            on_batch_complete=complete.set,
+        )
+
+        manager.submit_tasks([])
+
+        self.assertTrue(complete.is_set())
+        self.assertFalse(manager.is_running())
+        self.assertIsNone(manager._executor)
+
     def test_executor_is_released_after_batch_completion(self) -> None:
         complete = threading.Event()
         manager = DownloadManager(

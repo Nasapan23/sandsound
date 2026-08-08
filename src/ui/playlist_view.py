@@ -98,7 +98,7 @@ class PlaylistTableRow(ctk.CTkFrame):
         self._title_label.pack(side="left", fill="x", expand=True, padx=(0, 12))
         
         # Duration
-        duration_text = self._format_duration(video.duration) if video.duration else "--:--"
+        duration_text = self._format_duration(video.duration)
         self._duration_label = ctk.CTkLabel(
             self,
             text=duration_text,
@@ -136,6 +136,10 @@ class PlaylistTableRow(ctk.CTkFrame):
     
     def _format_duration(self, seconds: int) -> str:
         """Format seconds to MM:SS or HH:MM:SS."""
+        try:
+            seconds = max(0, int(seconds))
+        except (TypeError, ValueError, OverflowError):
+            return "--:--"
         if seconds >= 3600:
             hours = seconds // 3600
             mins = (seconds % 3600) // 60

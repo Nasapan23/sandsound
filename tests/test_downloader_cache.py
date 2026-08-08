@@ -91,6 +91,31 @@ class DownloaderCacheTests(unittest.TestCase):
         self.assertEqual(self.downloader.get_cached_video_info(url).title, "Fresh Playlist")
         self.assertTrue(self.downloader.is_cache_fresh(url, 60))
 
+    def test_cached_playlist_durations_are_normalized_to_integers(self) -> None:
+        url = "https://www.youtube.com/playlist?list=PL123"
+        self.db.upsert_media_cache(
+            url,
+            {
+                "url": url,
+                "title": "Playlist",
+                "duration": "240.9",
+                "is_playlist": True,
+                "entries": [
+                    {
+                        "video_id": "video-1",
+                        "title": "Song",
+                        "duration": 120.9,
+                    }
+                ],
+            },
+        )
+
+        info = self.downloader.get_cached_video_info(url)
+
+        self.assertIsNotNone(info)
+        self.assertEqual(info.duration, 240)
+        self.assertEqual(info.entries[0].duration, 120)
+
 
 if __name__ == "__main__":
     unittest.main()

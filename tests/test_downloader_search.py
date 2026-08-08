@@ -90,9 +90,34 @@ class DownloaderSearchTests(unittest.TestCase):
                 "www.youtube.com/playlist?list=PLi0jJ9mextr97so5xUA15uzIn2cuSDGhg"
             )
         )
+        self.assertTrue(
+            Downloader.is_playlist_url(
+                "https://www.youtube.com/watch?v=aaaaaaaaaaa&list=PLi0jJ9mextr97so5xUA15uzIn2cuSDGhg"
+            )
+        )
+        self.assertTrue(
+            Downloader.is_playlist_url(
+                "music.youtube.com/watch?v=aaaaaaaaaaa&list=PLi0jJ9mextr97so5xUA15uzIn2cuSDGhg"
+            )
+        )
+        self.assertTrue(
+            Downloader.is_playlist_url(
+                "https://m.youtube.com/watch?v=aaaaaaaaaaa&list=PLi0jJ9mextr97so5xUA15uzIn2cuSDGhg"
+            )
+        )
+        self.assertTrue(
+            Downloader.is_playlist_url(
+                "https://youtu.be/aaaaaaaaaaa?list=PLi0jJ9mextr97so5xUA15uzIn2cuSDGhg"
+            )
+        )
         self.assertFalse(
             Downloader.is_playlist_url(
                 "https://www.youtube.com/watch?v=aaaaaaaaaaa"
+            )
+        )
+        self.assertFalse(
+            Downloader.is_playlist_url(
+                "https://example.com/watch?v=aaaaaaaaaaa&list=PLi0jJ9mextr97so5xUA15uzIn2cuSDGhg"
             )
         )
 

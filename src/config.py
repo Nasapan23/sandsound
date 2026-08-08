@@ -6,6 +6,7 @@ Handles persistent settings storage and retrieval.
 import json
 import os
 import shutil
+import sys
 from pathlib import Path
 from typing import Any, Optional
 
@@ -218,11 +219,37 @@ class Config:
         """Set FFmpeg path."""
         self.set("ffmpeg_path", value)
 
+    @staticmethod
+    def _app_base_dir() -> Path:
+        """Return the app directory for packaged builds, or project root in source."""
+        if getattr(sys, "frozen", False):
+            return Path(sys.executable).resolve().parent
+        return Path(__file__).resolve().parent.parent
+
+    @classmethod
+    def get_bundled_ffmpeg_path(cls) -> Optional[str]:
+        """Return the bundled FFmpeg executable path when present."""
+        executable_name = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
+        base_dir = cls._app_base_dir()
+        candidates = [
+            base_dir / "ffmpeg" / "bin" / executable_name,
+            base_dir / "ffmpeg" / executable_name,
+            base_dir / executable_name,
+        ]
+        for candidate in candidates:
+            if candidate.is_file():
+                return str(candidate)
+        return None
+
     def get_ffmpeg_location(self) -> Optional[str]:
         """
         Get the FFmpeg location to use.
-        Returns configured path if set, otherwise None (use system PATH).
+        Returns bundled FFmpeg first, then configured path, otherwise None (use system PATH).
         """
+        bundled_ffmpeg = self.get_bundled_ffmpeg_path()
+        if bundled_ffmpeg:
+            return bundled_ffmpeg
+
         if self.ffmpeg_path and Path(self.ffmpeg_path).exists():
             return self.ffmpeg_path
         return None
@@ -231,6 +258,9 @@ class Config:
         """
         Check if FFmpeg is available (either in PATH or configured).
         """
+        if self.get_bundled_ffmpeg_path():
+            return True
+
         # Check configured path first
         if self.ffmpeg_path:
             ffmpeg_exe = Path(self.ffmpeg_path)

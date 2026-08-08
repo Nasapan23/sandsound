@@ -99,6 +99,19 @@ class DownloadManager:
         Args:
             tasks: List of download tasks to queue
         """
+        if not tasks:
+            with self._lock:
+                if self._is_running:
+                    raise RuntimeError("Download manager is already running")
+                self._shutdown_executor_locked(wait=False, cancel_futures=True)
+                self._tasks = {}
+                self._futures = {}
+                self._cancel_flags = {}
+                self._is_running = False
+            if self._on_batch_complete:
+                self._on_batch_complete()
+            return
+
         with self._lock:
             if self._is_running:
                 raise RuntimeError("Download manager is already running")

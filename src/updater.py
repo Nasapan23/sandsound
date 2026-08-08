@@ -1,11 +1,10 @@
 """
-Application update checks and Windows self-update support.
+Application update checks and Windows installer update support.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 import tempfile
@@ -80,7 +79,7 @@ def is_newer_version(current: str, candidate: str) -> bool:
 
 
 class AppUpdater:
-    """Checks GitHub releases and applies Windows executable updates."""
+    """Checks GitHub releases and launches Windows installer updates."""
 
     def __init__(
         self,
@@ -95,20 +94,13 @@ class AppUpdater:
         self.latest_release_page = latest_release_page
         self.request_headers = dict(request_headers or DEFAULT_REQUEST_HEADERS)
 
-    def supports_self_update(self) -> bool:
-        """Return True when this runtime can replace its own executable."""
-        executable = Path(sys.executable)
-        return (
-            sys.platform == "win32"
-            and bool(getattr(sys, "frozen", False))
-            and executable.suffix.lower() == ".exe"
-        )
+    def supports_installer_update(self) -> bool:
+        """Return True when this runtime can launch a Windows installer update."""
+        return sys.platform == "win32"
 
-    def can_replace_current_executable(self) -> bool:
-        """Best-effort writability check for packaged installations."""
-        if not self.supports_self_update():
-            return False
-        return os.access(Path(sys.executable).parent, os.W_OK)
+    def can_install_update(self) -> bool:
+        """Return True when in-app installer updates are supported."""
+        return self.supports_installer_update()
 
     def check_for_update(self, timeout: int = 5) -> Optional[UpdateInfo]:
         """Fetch the latest release metadata and compare versions."""
@@ -133,7 +125,10 @@ class AppUpdater:
         if not is_newer_version(self.current_version, latest_version):
             return None
 
-        asset = self._select_windows_asset(payload.get("assets") or [], latest_version)
+        asset = self._select_windows_installer_asset(
+            payload.get("assets") or [],
+            latest_version,
+        )
         return UpdateInfo(
             version=latest_version,
             current_version=self.current_version,
@@ -144,16 +139,21 @@ class AppUpdater:
         )
 
     @staticmethod
-    def _select_windows_asset(assets: list[dict], version: str) -> Optional[ReleaseAsset]:
-        expected_name = f"SandSound-Windows-{version}.exe".lower()
-        windows_assets: list[ReleaseAsset] = []
+    def _select_windows_installer_asset(
+        assets: list[dict],
+        version: str,
+    ) -> Optional[ReleaseAsset]:
+        expected_name = f"SandSound-Setup-{version}.exe".lower()
+        installer_assets: list[ReleaseAsset] = []
 
         for asset in assets:
             name = str(asset.get("name") or "")
             download_url = str(asset.get("browser_download_url") or "")
             if not name or not download_url or not name.lower().endswith(".exe"):
                 continue
-            windows_assets.append(
+            if "setup" not in name.lower() and "installer" not in name.lower():
+                continue
+            installer_assets.append(
                 ReleaseAsset(
                     name=name,
                     download_url=download_url,
@@ -161,15 +161,15 @@ class AppUpdater:
                 )
             )
 
-        for asset in windows_assets:
+        for asset in installer_assets:
             if asset.name.lower() == expected_name:
                 return asset
 
-        for asset in windows_assets:
-            if asset.name.lower().startswith("sandsound-windows-"):
+        for asset in installer_assets:
+            if asset.name.lower().startswith("sandsound-setup-"):
                 return asset
 
-        return windows_assets[0] if windows_assets else None
+        return installer_assets[0] if installer_assets else None
 
     def download_update(
         self,
@@ -216,14 +216,12 @@ class AppUpdater:
 
         return destination
 
-    def apply_downloaded_update(self, downloaded_path: Path) -> None:
-        """Spawn a helper process that replaces the current executable after exit."""
-        if not self.can_replace_current_executable():
-            raise UpdateError("Self-update is not available in this installation.")
-
-        target_exe = Path(sys.executable).resolve()
-        script_path = downloaded_path.parent / "apply_sandsound_update.ps1"
-        script_path.write_text(self._build_windows_update_script(), encoding="utf-8")
+    def launch_downloaded_installer(self, downloaded_path: Path) -> None:
+        """Launch a downloaded Inno Setup installer in silent update mode."""
+        if not self.can_install_update():
+            raise UpdateError("Installer updates are only available on Windows.")
+        if not downloaded_path.is_file():
+            raise UpdateError("Downloaded installer is missing.")
 
         creation_flags = (
             getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
@@ -232,18 +230,12 @@ class AppUpdater:
         )
 
         command = [
-            "powershell.exe",
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(script_path),
-            "-TargetExe",
-            str(target_exe),
-            "-DownloadedExe",
             str(downloaded_path),
-            "-ParentPid",
-            str(os.getpid()),
+            "/VERYSILENT",
+            "/SUPPRESSMSGBOXES",
+            "/NORESTART",
+            "/SP-",
+            "/CLOSEAPPLICATIONS",
         ]
 
         try:
@@ -253,51 +245,4 @@ class AppUpdater:
                 close_fds=True,
             )
         except OSError as exc:
-            raise UpdateError("Could not start the updater process.") from exc
-
-    @staticmethod
-    def _build_windows_update_script() -> str:
-        return """param(
-    [Parameter(Mandatory=$true)][string]$TargetExe,
-    [Parameter(Mandatory=$true)][string]$DownloadedExe,
-    [Parameter(Mandatory=$true)][int]$ParentPid
-)
-
-$ErrorActionPreference = "Stop"
-$backupPath = "$TargetExe.bak"
-
-try {
-    for ($attempt = 0; $attempt -lt 120; $attempt++) {
-        if (-not (Get-Process -Id $ParentPid -ErrorAction SilentlyContinue)) {
-            break
-        }
-        Start-Sleep -Seconds 1
-    }
-
-    Start-Sleep -Milliseconds 750
-
-    if (Test-Path -LiteralPath $backupPath) {
-        Remove-Item -LiteralPath $backupPath -Force
-    }
-
-    if (Test-Path -LiteralPath $TargetExe) {
-        Move-Item -LiteralPath $TargetExe -Destination $backupPath -Force
-    }
-
-    Move-Item -LiteralPath $DownloadedExe -Destination $TargetExe -Force
-    Start-Process -FilePath $TargetExe -WorkingDirectory (Split-Path -Parent $TargetExe)
-
-    if (Test-Path -LiteralPath $backupPath) {
-        Remove-Item -LiteralPath $backupPath -Force
-    }
-}
-catch {
-    if ((Test-Path -LiteralPath $backupPath) -and -not (Test-Path -LiteralPath $TargetExe)) {
-        Move-Item -LiteralPath $backupPath -Destination $TargetExe -Force
-    }
-}
-finally {
-    Start-Sleep -Milliseconds 500
-    Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
-}
-"""
+            raise UpdateError("Could not start the installer.") from exc

@@ -698,7 +698,7 @@ class SandSoundApp(ctk.CTk):
         self._available_update = update_info
         action_text = (
             "Update Now"
-            if update_info.asset and self._updater.can_replace_current_executable()
+            if update_info.asset and self._updater.can_install_update()
             else "Open Release"
         )
         self._update_label.configure(
@@ -733,7 +733,7 @@ class SandSoundApp(ctk.CTk):
         if not self._available_update or self._update_action_in_progress:
             return
 
-        if not (self._available_update.asset and self._updater.can_replace_current_executable()):
+        if not (self._available_update.asset and self._updater.can_install_update()):
             webbrowser.open(self._available_update.html_url)
             return
 
@@ -759,7 +759,7 @@ class SandSoundApp(ctk.CTk):
         """Download the update and hand off installation to a helper script."""
         try:
             downloaded_path = self._updater.download_update(update_info)
-            self._updater.apply_downloaded_update(downloaded_path)
+            self._updater.launch_downloaded_installer(downloaded_path)
         except UpdateError as exc:
             self._schedule_on_ui(lambda: self._handle_update_failure(str(exc)))
             return
@@ -777,9 +777,9 @@ class SandSoundApp(ctk.CTk):
         self._update_later_btn.configure(state="normal")
 
     def _finish_update_install(self, version: str) -> None:
-        """Close the app so the helper can replace the executable."""
+        """Close the app so the installer can update the installation."""
         self._update_label.configure(
-            text=f"Installing SandSound {version}. The app will restart."
+            text=f"Installing SandSound {version}. The app will close."
         )
         self.after(300, self.destroy)
 
@@ -895,26 +895,15 @@ class SandSoundApp(ctk.CTk):
             if self._playlist_dialog:
                 self._playlist_dialog.set_downloading(False)
             return
-        
-        # Reset update buffers for a clean UI state
-        with self._task_buffer_lock:
-            self._task_update_buffer.clear()
-        self._pending_aggregate_update = None
-        
-        self._is_downloading = True
-        if self._playlist_dialog:
-            self._playlist_dialog.set_downloading(True)
-        self._download_btn.configure(state="disabled", text="Downloading...")
-        
-        format_type = self._format_selector.get_format()
-        quality = self._format_selector.get_quality()
-        
-        # Build entries map for history tracking
+
+        # Build tasks before changing UI state so stale playlist selections cannot
+        # start an empty download batch.
         self._entries_map = {}
         if info.entries:
             self._entries_map = {e.video_id: e for e in info.entries}
-        
-        # Create download tasks
+
+        format_type = self._format_selector.get_format()
+        quality = self._format_selector.get_quality()
         tasks = []
         for video_id in video_ids:
             entry = self._entries_map.get(video_id)
@@ -927,6 +916,23 @@ class SandSoundApp(ctk.CTk):
                     quality=quality,
                     playlist_title=info.title if info.is_playlist else None,
                 ))
+
+        if not tasks:
+            self._progress_card.set_error(
+                "Download unavailable",
+                "The playlist changed. Reopen it and try again.",
+            )
+            return
+
+        # Reset update buffers for a clean UI state
+        with self._task_buffer_lock:
+            self._task_update_buffer.clear()
+        self._pending_aggregate_update = None
+
+        self._is_downloading = True
+        if self._playlist_dialog:
+            self._playlist_dialog.set_downloading(True)
+        self._download_btn.configure(state="disabled", text="Downloading...")
         
         # Create download manager with callbacks
         self._download_manager = DownloadManager(

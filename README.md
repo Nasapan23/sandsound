@@ -93,7 +93,8 @@ Project history is tracked in [CHANGELOG.md](CHANGELOG.md).
 
 - **Python** 3.10 or higher
 - **FFmpeg** (for audio/video conversion)
-  - Can be installed system-wide or configured in app settings
+  - Bundled automatically in the Windows installer
+  - Source installs can use a system-wide FFmpeg or a path configured in app settings
 - **Operating System**: Windows, Linux, or macOS
 - **Deno (optional, recommended for YouTube)**  
   - Recent yt-dlp versions use a JavaScript runtime for full YouTube support. Installing Deno reduces "No supported JavaScript runtime" warnings and can avoid 403/signature issues.  
@@ -103,11 +104,13 @@ Project history is tracked in [CHANGELOG.md](CHANGELOG.md).
 
 ## Installation
 
-### Option 1: Pre-built Executable (Windows)
+### Option 1: Windows Installer
 
 1. Download the latest release from the [Releases page](https://github.com/Nasapan23/sandsound/releases)
-2. Run `SandSound-Windows-X.X.X.exe`
-3. Ensure FFmpeg is installed (see [FFmpeg Setup](#ffmpeg-setup))
+2. Run `SandSound-Setup-X.X.X.exe`
+3. Launch SandSound from the Start Menu or Desktop shortcut
+
+The Windows installer installs SandSound for the current user and bundles FFmpeg for audio/video conversion.
 
 ### Option 2: From Source
 
@@ -151,7 +154,7 @@ python --version  # Should be 3.10 or higher
 
 ### FFmpeg Setup
 
-FFmpeg is required for audio conversion. You have two options:
+FFmpeg is required for audio conversion. The Windows installer bundles FFmpeg automatically. If you run SandSound from source or want to override the bundled copy, you have two options:
 
 1. **System-wide installation** (recommended)
    - Download from [ffmpeg.org](https://ffmpeg.org/download.html)
@@ -212,7 +215,8 @@ Playlist and video metadata is cached in the same SQLite database so playlist de
 ### Common Issues
 
 **FFmpeg not found**
-- Ensure FFmpeg is installed and in your PATH, or configure the path in Settings
+- If installed from the Windows installer, reinstall the latest `SandSound-Setup-X.X.X.exe`
+- If running from source, ensure FFmpeg is installed and in your PATH, or configure the path in Settings
 
 **Downloads fail or are slow**
 - Check your internet connection
@@ -221,7 +225,7 @@ Playlist and video metadata is cached in the same SQLite database so playlist de
 - If you see "No supported JavaScript runtime" or 403/rate-limit errors: install Deno (see [Requirements](#requirements)) and/or reduce concurrent downloads in Settings to avoid YouTube rate limiting
 
 **Playlist button doesn't appear**
-- Ensure the URL is a valid YouTube playlist
+- Ensure the URL is a valid YouTube playlist or a YouTube video URL with a `list=` playlist parameter
 - Check that the playlist is public or you have proper authentication
 
 **Application won't start**

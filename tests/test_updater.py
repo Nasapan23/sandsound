@@ -1,4 +1,6 @@
 import unittest
+from pathlib import Path
+import tempfile
 from unittest import mock
 
 import src.updater as updater_module
@@ -27,7 +29,7 @@ class UpdaterTests(unittest.TestCase):
 
         self.assertIsNone(updater._build_update_info(payload))
 
-    def test_build_update_info_selects_expected_windows_asset(self) -> None:
+    def test_build_update_info_selects_expected_windows_installer_asset(self) -> None:
         updater = AppUpdater("1.0.4")
 
         payload = {
@@ -42,6 +44,11 @@ class UpdaterTests(unittest.TestCase):
                 {
                     "name": "SandSound-Windows-1.0.5.exe",
                     "browser_download_url": "https://example.com/SandSound-Windows-1.0.5.exe",
+                    "size": 512,
+                },
+                {
+                    "name": "SandSound-Setup-1.0.5.exe",
+                    "browser_download_url": "https://example.com/SandSound-Setup-1.0.5.exe",
                     "size": 1024,
                 },
             ],
@@ -54,23 +61,54 @@ class UpdaterTests(unittest.TestCase):
         self.assertEqual(update_info.version, "1.0.5")
         self.assertIsNotNone(update_info.asset)
         assert update_info.asset is not None
-        self.assertEqual(update_info.asset.name, "SandSound-Windows-1.0.5.exe")
+        self.assertEqual(update_info.asset.name, "SandSound-Setup-1.0.5.exe")
 
-    def test_can_replace_current_executable_requires_packaged_windows_build(self) -> None:
+    def test_build_update_info_ignores_standalone_exe_without_installer(self) -> None:
         updater = AppUpdater("1.0.4")
 
-        with mock.patch("src.updater.sys.platform", "win32"), \
-             mock.patch("src.updater.sys.executable", "C:\\Apps\\SandSound.exe"), \
-             mock.patch("src.updater.os.access", return_value=True), \
-             mock.patch.object(updater_module.sys, "frozen", True, create=True):
-            self.assertTrue(updater.supports_self_update())
-            self.assertTrue(updater.can_replace_current_executable())
+        payload = {
+            "tag_name": "v1.0.5",
+            "html_url": "https://example.com/release",
+            "assets": [
+                {
+                    "name": "SandSound-Windows-1.0.5.exe",
+                    "browser_download_url": "https://example.com/SandSound-Windows-1.0.5.exe",
+                },
+            ],
+        }
 
-        with mock.patch("src.updater.sys.platform", "win32"), \
-             mock.patch("src.updater.sys.executable", "C:\\Apps\\python.exe"), \
-             mock.patch("src.updater.os.access", return_value=True):
-            self.assertFalse(updater.supports_self_update())
-            self.assertFalse(updater.can_replace_current_executable())
+        update_info = updater._build_update_info(payload)
+
+        self.assertIsNotNone(update_info)
+        assert update_info is not None
+        self.assertIsNone(update_info.asset)
+
+    def test_can_install_update_requires_windows(self) -> None:
+        updater = AppUpdater("1.0.4")
+
+        with mock.patch("src.updater.sys.platform", "win32"):
+            self.assertTrue(updater.supports_installer_update())
+            self.assertTrue(updater.can_install_update())
+
+        with mock.patch("src.updater.sys.platform", "linux"):
+            self.assertFalse(updater.supports_installer_update())
+            self.assertFalse(updater.can_install_update())
+
+    def test_launch_downloaded_installer_starts_silent_setup(self) -> None:
+        updater = AppUpdater("1.0.4")
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            installer = Path(tempdir) / "SandSound-Setup-1.0.5.exe"
+            installer.write_bytes(b"setup")
+
+            with mock.patch("src.updater.sys.platform", "win32"), \
+                 mock.patch.object(updater_module.subprocess, "Popen") as popen:
+                updater.launch_downloaded_installer(installer)
+
+        command = popen.call_args.args[0]
+        self.assertEqual(command[0], str(installer))
+        self.assertIn("/VERYSILENT", command)
+        self.assertIn("/CLOSEAPPLICATIONS", command)
 
 
 if __name__ == "__main__":

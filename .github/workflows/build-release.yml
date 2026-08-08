@@ -17,10 +17,23 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Determine version
+        id: version
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            "version=${{ github.event.inputs.version }}" >> $env:GITHUB_OUTPUT
+          } else {
+            $version = "${env:GITHUB_REF}" -replace "^refs/tags/v", ""
+            "version=$version" >> $env:GITHUB_OUTPUT
+          }
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -34,6 +47,11 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller pyinstaller-hooks-contrib
 
+      - name: Install packaging tools
+        shell: pwsh
+        run: |
+          choco install ffmpeg innosetup -y --no-progress
+
       - name: Run tests
         run: |
           python -m unittest discover -s tests -v
@@ -43,11 +61,34 @@ jobs:
         run: |
           pyinstaller --clean --noconfirm --log-level WARN sandsound.spec
 
+      - name: Bundle FFmpeg
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist\ffmpeg\bin | Out-Null
+          $ffmpeg = (Get-Command ffmpeg.exe).Source
+          $ffprobe = (Get-Command ffprobe.exe -ErrorAction SilentlyContinue).Source
+          Copy-Item -LiteralPath $ffmpeg -Destination dist\ffmpeg\bin\ffmpeg.exe -Force
+          if ($ffprobe) {
+            Copy-Item -LiteralPath $ffprobe -Destination dist\ffmpeg\bin\ffprobe.exe -Force
+          }
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) {
+            $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          }
+          if (-not (Test-Path -LiteralPath $iscc)) {
+            throw "Inno Setup compiler was not found."
+          }
+          & $iscc "installer\SandSound.iss" "/DAppVersion=${{ steps.version.outputs.version }}"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: sandsound-windows
-          path: dist/SandSound.exe
+          name: sandsound-windows-installer
+          path: dist/installer/SandSound-Setup-${{ steps.version.outputs.version }}.exe
           retention-days: 30
 
   release:
@@ -61,16 +102,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Determine version
-        id: version
-        run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
-          else
-            VERSION=${GITHUB_REF#refs/tags/v}
-            echo "version=$VERSION" >> $GITHUB_OUTPUT
-          fi
-
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -79,26 +110,29 @@ jobs:
       - name: Prepare release assets
         run: |
           mkdir -p release-assets
-          VERSION="${{ steps.version.outputs.version }}"
-          if [ -f "artifacts/sandsound-windows/SandSound.exe" ]; then
-            cp artifacts/sandsound-windows/SandSound.exe release-assets/SandSound-Windows-${VERSION}.exe
+          VERSION="${{ needs.build.outputs.version }}"
+          if [ -f "artifacts/sandsound-windows-installer/SandSound-Setup-${VERSION}.exe" ]; then
+            cp "artifacts/sandsound-windows-installer/SandSound-Setup-${VERSION}.exe" "release-assets/SandSound-Setup-${VERSION}.exe"
+          else
+            echo "Missing installer artifact for version ${VERSION}" >&2
+            exit 1
           fi
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: v${{ steps.version.outputs.version }}
-          name: Release v${{ steps.version.outputs.version }}
+          tag_name: v${{ needs.build.outputs.version }}
+          name: Release v${{ needs.build.outputs.version }}
           body: |
-            ## SandSound v${{ steps.version.outputs.version }}
+            ## SandSound v${{ needs.build.outputs.version }}
             
             ### Downloads
-            - **Windows**: SandSound-Windows-${{ steps.version.outputs.version }}.exe
+            - **Windows Installer**: SandSound-Setup-${{ needs.build.outputs.version }}.exe
             
             ### Installation
-            - **Windows**: Download the .exe file and run it
+            - **Windows**: Download and run the installer. It installs SandSound for the current user and creates shortcuts.
             
-            **Note**: FFmpeg is required for audio conversion. Make sure it's installed on your system or configured in the app settings.
+            **Note**: FFmpeg is bundled with the Windows installer. You can still override the FFmpeg path in app settings.
           files: release-assets/*
           draft: false
           prerelease: false
