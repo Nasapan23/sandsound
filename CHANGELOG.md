@@ -7,17 +7,32 @@ The format is based on Keep a Changelog, and this project uses semantic versioni
 ## [Unreleased]
 
 ### Added
-- Added a Search mode for live use: search YouTube from the app, review the top 4 video results, and download the selected result through the existing format/progress flow.
-- Search results now show thumbnails and wrap result text to avoid cropped titles or metadata.
-- Added a per-user Windows installer release package with bundled FFmpeg and Start Menu/Desktop shortcuts.
-- Added installer-based in-app updates that download and launch the GitHub release setup package.
+- Native Windows CI now restores the SDK pinned in `global.json`, publishes the complete portable folder, and verifies its executable and bundled media tools.
+- GitHub Actions uploads a portable ZIP for every build and creates a GitHub Release ZIP automatically for version tags.
 
 ### Changed
-- GitHub Releases now publish `SandSound-Setup-{version}.exe` as the primary Windows download.
-- Windows builds prefer bundled FFmpeg before configured paths or system PATH.
+- The download screen now has a more spacious, modern dashboard layout with clearer actions and improved visual hierarchy.
 
 ### Fixed
 - Playlist detection now handles YouTube and Music YouTube `watch?...&list=...` URLs.
+
+## [2.0.0] - 2026-08-08
+
+### Added
+- Complete native C# and WinUI 3 application with Mica, Windows 11 controls, and system theme support.
+- Unpackaged, self-contained .NET 10 x64 publishing for copy-and-run USB deployment.
+- Portable yt-dlp and FFmpeg toolchain bundled by `scripts/publish-portable.ps1`.
+- Portable settings, download history, logs, and downloads stored beside the executable.
+- Native URL inspection, YouTube search, playlist selection, concurrent queue, progress, and cancellation.
+- MP3, M4A, OPUS, FLAC, WAV, MP4, WebM, and MKV output choices.
+- Cookie-file authentication, playlist folders, smart re-download filtering, and GitHub update checks.
+
+### Changed
+- Replaced CustomTkinter, Python, PyInstaller, SQLite, and the Inno Setup installer with one native Windows codebase and a zipped portable release.
+- Release artifacts no longer install files, create shortcuts, write registry values, or require administrator access.
+
+### Removed
+- Removed the legacy Python application, tests, screenshots, requirements, PyInstaller spec, and installer from the native rewrite branch. They remain recoverable from `main` and existing Git history.
 
 ## [1.0.6] - 2026-03-26
 

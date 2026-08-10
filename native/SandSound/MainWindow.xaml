@@ -1,0 +1,291 @@
+<Window
+    x:Class="SandSound.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <Window.SystemBackdrop>
+        <MicaBackdrop Kind="BaseAlt" />
+    </Window.SystemBackdrop>
+
+    <Grid x:Name="RootGrid" Background="{StaticResource PageBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="48" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid x:Name="AppTitleBar" Grid.Row="0" Padding="16,0" Background="Transparent">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Border Width="28" Height="28" CornerRadius="8" Background="{StaticResource SandBrush}">
+                <FontIcon Glyph="&#xE896;" FontSize="15" Foreground="#FF201A12" HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Spacing="8" Margin="10,0,0,0">
+                <TextBlock Text="SandSound" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                <TextBlock Text="2.0" Opacity="0.48" FontSize="12" VerticalAlignment="Center" />
+            </StackPanel>
+        </Grid>
+
+        <NavigationView x:Name="Navigation" Grid.Row="1" IsBackButtonVisible="Collapsed"
+                        IsSettingsVisible="False" PaneDisplayMode="LeftCompact"
+                        SelectionChanged="Navigation_SelectionChanged">
+            <NavigationView.MenuItems>
+                <NavigationViewItem Content="Download" Tag="home">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE896;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="Queue" Tag="queue">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE7C3;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="Library" Tag="library">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE8F1;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="Settings" Tag="settings">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE713;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+            </NavigationView.MenuItems>
+
+            <Grid>
+                <InfoBar x:Name="MessageBar" VerticalAlignment="Top" Margin="24,16,24,0"
+                         IsOpen="False" IsClosable="True" />
+
+                <ScrollViewer x:Name="HomePage" Padding="48,42,48,52">
+                    <StackPanel MaxWidth="1120" HorizontalAlignment="Stretch" Spacing="28">
+                        <Grid ColumnSpacing="32">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="240" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Spacing="12">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Border Background="#28F4BE62" CornerRadius="12" Padding="10,5">
+                                        <TextBlock Text="SANDSOUND 2.0" Foreground="{StaticResource SandBrush}" FontSize="12" FontWeight="SemiBold" CharacterSpacing="80" />
+                                    </Border>
+                                </StackPanel>
+                                <TextBlock Text="Your media,\nready when you are." FontSize="42" FontWeight="SemiBold" LineHeight="48" />
+                                <TextBlock Text="Turn videos and playlists into a personal offline library. Fast, local, and built to travel with you."
+                                           Foreground="{StaticResource MutedTextBrush}" FontSize="16" TextWrapping="Wrap" MaxWidth="570" LineHeight="24" />
+                            </StackPanel>
+                            <Border Grid.Column="1" Background="{StaticResource CardElevatedBrush}" BorderBrush="{StaticResource CardStrokeBrush}"
+                                    BorderThickness="1" CornerRadius="18" Padding="20" VerticalAlignment="Center">
+                                <StackPanel Spacing="12">
+                                    <FontIcon Glyph="&#xE896;" FontSize="24" Foreground="{StaticResource SandBrush}" />
+                                    <TextBlock Text="Portable by design" FontWeight="SemiBold" FontSize="16" />
+                                    <TextBlock Text="No installer. Your downloads and settings stay with the app."
+                                               Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" LineHeight="20" />
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+
+                        <Border Background="{StaticResource CardBrush}" BorderBrush="{StaticResource CardStrokeBrush}"
+                                BorderThickness="1" CornerRadius="18" Padding="24">
+                            <StackPanel Spacing="18">
+                                <Grid>
+                                    <StackPanel Spacing="4">
+                                        <TextBlock Text="Start a download" FontSize="20" FontWeight="SemiBold" />
+                                        <TextBlock Text="Paste a link or find something new." Foreground="{StaticResource MutedTextBrush}" />
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+                                        <ToggleButton x:Name="UrlModeButton" Content="Paste link" IsChecked="True" Click="UrlMode_Click" Style="{StaticResource ModeToggleStyle}" />
+                                        <ToggleButton x:Name="SearchModeButton" Content="Search" Click="SearchMode_Click" Style="{StaticResource ModeToggleStyle}" />
+                                    </StackPanel>
+                                </Grid>
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox x:Name="SourceBox" PlaceholderText="Paste a YouTube video or playlist URL"
+                                             KeyDown="SourceBox_KeyDown" Padding="14,11" />
+                                    <Button x:Name="InspectButton" Grid.Column="1" Content="Inspect" Style="{StaticResource AccentButtonStyle}"
+                                            Click="InspectButton_Click" MinWidth="126" Padding="18,11" />
+                                </Grid>
+                                <ProgressBar x:Name="DiscoveryProgress" IsIndeterminate="True" Visibility="Collapsed" />
+                            </StackPanel>
+                        </Border>
+
+                        <Grid ColumnSpacing="16">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                            <Border Background="{StaticResource CardBrush}" BorderBrush="{StaticResource CardStrokeBrush}" BorderThickness="1" CornerRadius="14" Padding="16">
+                                <StackPanel Spacing="7"><FontIcon Glyph="&#xE8B5;" Foreground="{StaticResource SandBrush}" /><TextBlock Text="Any format" FontWeight="SemiBold" /><TextBlock Text="Audio or video, in the quality you choose." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" FontSize="12" /></StackPanel>
+                            </Border>
+                            <Border Grid.Column="1" Background="{StaticResource CardBrush}" BorderBrush="{StaticResource CardStrokeBrush}" BorderThickness="1" CornerRadius="14" Padding="16">
+                                <StackPanel Spacing="7"><FontIcon Glyph="&#xE8FD;" Foreground="{StaticResource SandBrush}" /><TextBlock Text="Playlists welcome" FontWeight="SemiBold" /><TextBlock Text="Choose the tracks you want, then queue them together." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" FontSize="12" /></StackPanel>
+                            </Border>
+                            <Border Grid.Column="2" Background="{StaticResource CardBrush}" BorderBrush="{StaticResource CardStrokeBrush}" BorderThickness="1" CornerRadius="14" Padding="16">
+                                <StackPanel Spacing="7"><FontIcon Glyph="&#xE7C3;" Foreground="{StaticResource SandBrush}" /><TextBlock Text="Keep moving" FontWeight="SemiBold" /><TextBlock Text="Queue downloads and continue browsing while they run." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" FontSize="12" /></StackPanel>
+                            </Border>
+                        </Grid>
+
+                        <StackPanel x:Name="SearchResultsSection" Visibility="Collapsed" Spacing="12">
+                            <TextBlock Text="Search results" Style="{StaticResource SubtitleTextBlockStyle}" />
+                            <ItemsControl x:Name="SearchResultsList">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Background="{StaticResource CardBrush}" BorderBrush="{StaticResource CardStrokeBrush}"
+                                                BorderThickness="1" CornerRadius="12" Padding="14" Margin="0,0,0,8">
+                                            <Grid ColumnSpacing="14">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Spacing="4">
+                                                    <TextBlock Text="{Binding Title}" Style="{StaticResource BodyStrongTextBlockStyle}" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Text="{Binding Subtitle}" Opacity="0.6" TextTrimming="CharacterEllipsis" />
+                                                </StackPanel>
+                                                <Button Grid.Column="1" Content="Download" CommandParameter="{Binding}" Click="SearchDownload_Click" />
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+
+                        <Border x:Name="PreviewCard" Visibility="Collapsed" Background="{StaticResource CardBrush}"
+                                BorderBrush="{StaticResource CardStrokeBrush}" BorderThickness="1" CornerRadius="16" Padding="20">
+                            <StackPanel Spacing="16">
+                                <StackPanel Spacing="4">
+                                    <TextBlock x:Name="PreviewTitle" Style="{StaticResource SubtitleTextBlockStyle}" TextWrapping="Wrap" />
+                                    <TextBlock x:Name="PreviewSubtitle" Opacity="0.62" />
+                                </StackPanel>
+                                <ListView x:Name="PlaylistList" SelectionMode="Multiple" MaxHeight="300" Visibility="Collapsed">
+                                    <ListView.ItemTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Padding="4" Spacing="3">
+                                                <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Text="{Binding Subtitle}" FontSize="12" Opacity="0.55" />
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ListView.ItemTemplate>
+                                </ListView>
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <ComboBox x:Name="FormatBox" Header="Format" SelectedIndex="0" HorizontalAlignment="Stretch">
+                                        <x:String>mp3</x:String><x:String>m4a</x:String><x:String>opus</x:String>
+                                        <x:String>flac</x:String><x:String>wav</x:String><x:String>mp4</x:String>
+                                        <x:String>webm</x:String><x:String>mkv</x:String>
+                                    </ComboBox>
+                                    <ComboBox x:Name="QualityBox" Grid.Column="1" Header="Quality" SelectedIndex="0" HorizontalAlignment="Stretch">
+                                        <x:String>Best</x:String><x:String>320 kbps</x:String><x:String>256 kbps</x:String>
+                                        <x:String>192 kbps</x:String><x:String>1080p</x:String><x:String>720p</x:String><x:String>480p</x:String>
+                                    </ComboBox>
+                                    <Button Grid.Column="2" x:Name="QueueButton" Content="Add to queue" Style="{StaticResource AccentButtonStyle}"
+                                            VerticalAlignment="Bottom" Click="QueueButton_Click" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+
+                <Grid x:Name="QueuePage" Visibility="Collapsed" Padding="34,28,34,36">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Download queue" Style="{StaticResource TitleLargeTextBlockStyle}" />
+                            <TextBlock Text="Downloads continue while you browse the app." Opacity="0.62" />
+                        </StackPanel>
+                        <Button Grid.Column="1" Content="Open downloads" Click="OpenDownloads_Click" VerticalAlignment="Center" />
+                        <Button Grid.Column="2" Content="Cancel all" Click="CancelAll_Click" VerticalAlignment="Center" />
+                    </Grid>
+                    <ListView x:Name="DownloadsList" Grid.Row="1" Margin="0,22,0,0">
+                        <ListView.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="{StaticResource CardBrush}" BorderBrush="{StaticResource CardStrokeBrush}"
+                                        BorderThickness="1" CornerRadius="12" Padding="16" Margin="0,0,0,10">
+                                    <Grid ColumnSpacing="14">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <StackPanel Spacing="7">
+                                            <Grid>
+                                                <TextBlock Text="{Binding Title}" Style="{StaticResource BodyStrongTextBlockStyle}" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Text="{Binding StateText}" HorizontalAlignment="Right" Opacity="0.62" />
+                                            </Grid>
+                                            <ProgressBar Value="{Binding Progress}" Maximum="100" />
+                                            <TextBlock Text="{Binding Detail}" FontSize="12" Opacity="0.58" TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                        <Button Grid.Column="1" Content="Cancel" CommandParameter="{Binding}" Click="CancelItem_Click"
+                                                IsEnabled="{Binding CanCancel}" VerticalAlignment="Center" />
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </Grid>
+
+                <Grid x:Name="LibraryPage" Visibility="Collapsed" Padding="34,28,34,36">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                    <Grid>
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Library" Style="{StaticResource TitleLargeTextBlockStyle}" />
+                            <TextBlock Text="A portable record of downloads stored beside SandSound." Opacity="0.62" />
+                        </StackPanel>
+                        <Button Content="Clear history" Click="ClearHistory_Click" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                    </Grid>
+                    <ListView x:Name="HistoryList" Grid.Row="1" Margin="0,22,0,0">
+                        <ListView.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="{StaticResource CardBrush}" BorderBrush="{StaticResource CardStrokeBrush}"
+                                        BorderThickness="1" CornerRadius="12" Padding="16" Margin="0,0,0,8">
+                                    <StackPanel Spacing="4">
+                                        <TextBlock Text="{Binding Title}" Style="{StaticResource BodyStrongTextBlockStyle}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{Binding Subtitle}" FontSize="12" Opacity="0.58" />
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </Grid>
+
+                <ScrollViewer x:Name="SettingsPage" Visibility="Collapsed" Padding="34,28,34,44">
+                    <StackPanel MaxWidth="760" Spacing="20">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Settings" Style="{StaticResource TitleLargeTextBlockStyle}" />
+                            <TextBlock Text="Every setting stays in the portable Data folder." Opacity="0.62" />
+                        </StackPanel>
+                        <Border Background="{StaticResource CardBrush}" BorderBrush="{StaticResource CardStrokeBrush}" BorderThickness="1" CornerRadius="16" Padding="20">
+                            <StackPanel Spacing="16">
+                                <TextBlock Text="Storage" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                <Grid ColumnSpacing="10">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <TextBox x:Name="DownloadDirectoryBox" Header="Download folder" IsReadOnly="True" />
+                                    <Button Grid.Column="1" Content="Choose…" Click="ChooseDownloadFolder_Click" VerticalAlignment="Bottom" />
+                                </Grid>
+                                <Grid ColumnSpacing="10">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <TextBox x:Name="CookieFileBox" Header="Cookies (optional)" IsReadOnly="True" PlaceholderText="For age-restricted or private videos" />
+                                    <Button Grid.Column="1" Content="Choose…" Click="ChooseCookieFile_Click" VerticalAlignment="Bottom" />
+                                </Grid>
+                                <CheckBox x:Name="PlaylistFoldersCheck" Content="Create a folder for each playlist" />
+                            </StackPanel>
+                        </Border>
+                        <Border Background="{StaticResource CardBrush}" BorderBrush="{StaticResource CardStrokeBrush}" BorderThickness="1" CornerRadius="16" Padding="20">
+                            <StackPanel Spacing="16">
+                                <TextBlock Text="Experience" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                <ComboBox x:Name="ThemeBox" Header="Theme" HorizontalAlignment="Stretch">
+                                    <x:String>System</x:String><x:String>Light</x:String><x:String>Dark</x:String>
+                                </ComboBox>
+                                <NumberBox x:Name="ConcurrencyBox" Header="Concurrent downloads" Minimum="1" Maximum="8" SpinButtonPlacementMode="Inline" />
+                            </StackPanel>
+                        </Border>
+                        <Border Background="{StaticResource CardBrush}" BorderBrush="{StaticResource CardStrokeBrush}" BorderThickness="1" CornerRadius="16" Padding="20">
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="Portable runtime" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                <TextBlock x:Name="RuntimeStatusText" TextWrapping="Wrap" Opacity="0.68" />
+                                <TextBlock x:Name="PortablePathText" TextWrapping="Wrap" FontFamily="Consolas" FontSize="12" Opacity="0.55" />
+                                <Button Content="Check for updates" Click="CheckUpdates_Click" HorizontalAlignment="Left" Margin="0,6,0,0" />
+                            </StackPanel>
+                        </Border>
+                        <Button Content="Save settings" Style="{StaticResource AccentButtonStyle}" Click="SaveSettings_Click" HorizontalAlignment="Left" />
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
+        </NavigationView>
+    </Grid>
+</Window>

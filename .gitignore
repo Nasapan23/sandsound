@@ -28,6 +28,7 @@ MANIFEST
 
 # PyInstaller
 *.manifest
+!native/SandSound/app.manifest
 *.spec
 !sandsound.spec  # Keep the spec file in repo
 
@@ -111,6 +112,7 @@ desktop.ini
 # Markdown files (per project requirement)
 *.md
 !.agent/**/*.md
+!docs/**/*.md
 !README.md
 !CHANGELOG.md
 
@@ -141,3 +143,7 @@ logs/
 tmp/
 temp/
 /.agent
+.tools/
+artifacts/
+native/**/bin/
+native/**/obj/

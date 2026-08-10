@@ -1,140 +1,85 @@
-name: Build and Release
+name: Build portable SandSound release
 
 on:
   push:
-    tags:
-      - 'v*.*.*'  # Only build on version tags like v1.0.0
-  workflow_dispatch:  # Allows manual triggering
-    inputs:
-      version:
-        description: 'Version number (e.g., 1.0.0)'
-        required: true
-        type: string
+    branches: [main, rewrite/winui3-portable]
+    tags: ["v*.*.*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
-  contents: write  # Required to create releases
+  contents: read
+
+concurrency:
+  group: portable-release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build:
+  portable-build:
+    name: Build Windows x64 portable app
     runs-on: windows-latest
-    outputs:
-      version: ${{ steps.version.outputs.version }}
 
     steps:
-      - name: Checkout code
+      - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Determine version
-        id: version
-        shell: pwsh
-        run: |
-          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
-            "version=${{ github.event.inputs.version }}" >> $env:GITHUB_OUTPUT
-          } else {
-            $version = "${env:GITHUB_REF}" -replace "^refs/tags/v", ""
-            "version=$version" >> $env:GITHUB_OUTPUT
-          }
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v4
         with:
-          python-version: '3.10'
-          cache: 'pip'
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: native/SandSound/SandSound.csproj
 
-      - name: Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pyinstaller pyinstaller-hooks-contrib
+      - name: Restore native app
+        run: dotnet restore .\native\SandSound\SandSound.csproj --runtime win-x64
 
-      - name: Install packaging tools
+      - name: Publish portable app and media tools
+        shell: pwsh
+        run: .\scripts\publish-portable.ps1
+
+      - name: Verify portable layout
         shell: pwsh
         run: |
-          choco install ffmpeg innosetup -y --no-progress
+          $release = '.\artifacts\SandSound-win-x64'
+          $required = @('SandSound.exe', 'Tools\yt-dlp.exe', 'Tools\ffmpeg.exe', 'Tools\ffprobe.exe')
+          $missing = $required | Where-Object { -not (Test-Path (Join-Path $release $_)) }
+          if ($missing) { throw "Portable release is incomplete: $($missing -join ', ')" }
 
-      - name: Run tests
-        run: |
-          python -m unittest discover -s tests -v
-
-      - name: Build executable
-        shell: cmd
-        run: |
-          pyinstaller --clean --noconfirm --log-level WARN sandsound.spec
-
-      - name: Bundle FFmpeg
+      - name: Create release archive
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path dist\ffmpeg\bin | Out-Null
-          $ffmpeg = (Get-Command ffmpeg.exe).Source
-          $ffprobe = (Get-Command ffprobe.exe -ErrorAction SilentlyContinue).Source
-          Copy-Item -LiteralPath $ffmpeg -Destination dist\ffmpeg\bin\ffmpeg.exe -Force
-          if ($ffprobe) {
-            Copy-Item -LiteralPath $ffprobe -Destination dist\ffmpeg\bin\ffprobe.exe -Force
-          }
+          $archive = '.\artifacts\SandSound-win-x64.zip'
+          if (Test-Path $archive) { Remove-Item -LiteralPath $archive -Force }
+          Compress-Archive -Path .\artifacts\SandSound-win-x64\* -DestinationPath $archive -CompressionLevel Optimal
+          Get-FileHash $archive -Algorithm SHA256 | Format-List
 
-      - name: Build installer
-        shell: pwsh
-        run: |
-          $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
-          if (-not $iscc) {
-            $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          }
-          if (-not (Test-Path -LiteralPath $iscc)) {
-            throw "Inno Setup compiler was not found."
-          }
-          & $iscc "installer\SandSound.iss" "/DAppVersion=${{ steps.version.outputs.version }}"
-
-      - name: Upload artifact
+      - name: Upload portable archive
         uses: actions/upload-artifact@v4
         with:
-          name: sandsound-windows-installer
-          path: dist/installer/SandSound-Setup-${{ steps.version.outputs.version }}.exe
+          name: SandSound-win-x64
+          path: artifacts/SandSound-win-x64.zip
+          if-no-files-found: error
           retention-days: 30
 
-  release:
-    needs: build
+  github-release:
+    name: Publish GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: portable-build
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     permissions:
-      contents: write  # Required to create releases
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      contents: write
 
-      - name: Download all artifacts
+    steps:
+      - name: Download portable archive
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
+          name: SandSound-win-x64
+          path: release
 
-      - name: Prepare release assets
-        run: |
-          mkdir -p release-assets
-          VERSION="${{ needs.build.outputs.version }}"
-          if [ -f "artifacts/sandsound-windows-installer/SandSound-Setup-${VERSION}.exe" ]; then
-            cp "artifacts/sandsound-windows-installer/SandSound-Setup-${VERSION}.exe" "release-assets/SandSound-Setup-${VERSION}.exe"
-          else
-            echo "Missing installer artifact for version ${VERSION}" >&2
-            exit 1
-          fi
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ needs.build.outputs.version }}
-          name: Release v${{ needs.build.outputs.version }}
-          body: |
-            ## SandSound v${{ needs.build.outputs.version }}
-            
-            ### Downloads
-            - **Windows Installer**: SandSound-Setup-${{ needs.build.outputs.version }}.exe
-            
-            ### Installation
-            - **Windows**: Download and run the installer. It installs SandSound for the current user and creates shortcuts.
-            
-            **Note**: FFmpeg is bundled with the Windows installer. You can still override the FFmpeg path in app settings.
-          files: release-assets/*
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: SandSound ${{ github.ref_name }}
+          generate_release_notes: true
+          files: release/SandSound-win-x64.zip
