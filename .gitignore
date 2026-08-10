@@ -112,6 +112,7 @@ desktop.ini
 # Markdown files (per project requirement)
 *.md
 !.agent/**/*.md
+!docs/**/*.md
 !README.md
 !CHANGELOG.md
 

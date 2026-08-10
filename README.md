@@ -2,6 +2,8 @@
 
 SandSound is a native Windows downloader for YouTube audio, video, and playlists. Version 2.0 is a complete C# and WinUI 3 rewrite designed to run directly from a USB drive without an installer, Python, .NET, FFmpeg, or yt-dlp already installed on the destination computer.
 
+For an overview of the 2.0 architecture, portability model, and release pipeline, see [SandSound 2.0 implementation notes](docs/sandsound-2.0.md).
+
 ## Why native WinUI instead of Chromium
 
 WinUI 3 gives SandSound the Windows 11 control set, Mica backdrop, native accessibility, DPI handling, keyboard behavior, and substantially less application overhead than shipping a browser engine. The published app is unpackaged and self-contained: the .NET and Windows App SDK runtimes travel with the executable, while yt-dlp and FFmpeg live in the adjacent `Tools` folder.
