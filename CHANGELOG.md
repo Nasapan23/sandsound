@@ -19,6 +19,24 @@ The format is based on Keep a Changelog, and this project uses semantic versioni
 ### Fixed
 - Playlist detection now handles YouTube and Music YouTube `watch?...&list=...` URLs.
 
+## [2.0.0] - 2026-08-08
+
+### Added
+- Complete native C# and WinUI 3 application with Mica, Windows 11 controls, and system theme support.
+- Unpackaged, self-contained .NET 10 x64 publishing for copy-and-run USB deployment.
+- Portable yt-dlp and FFmpeg toolchain bundled by `scripts/publish-portable.ps1`.
+- Portable settings, download history, logs, and downloads stored beside the executable.
+- Native URL inspection, YouTube search, playlist selection, concurrent queue, progress, and cancellation.
+- MP3, M4A, OPUS, FLAC, WAV, MP4, WebM, and MKV output choices.
+- Cookie-file authentication, playlist folders, smart re-download filtering, and GitHub update checks.
+
+### Changed
+- Replaced CustomTkinter, Python, PyInstaller, SQLite, and the Inno Setup installer with one native Windows codebase and a zipped portable release.
+- Release artifacts no longer install files, create shortcuts, write registry values, or require administrator access.
+
+### Removed
+- Removed the legacy Python application, tests, screenshots, requirements, PyInstaller spec, and installer from the native rewrite branch. They remain recoverable from `main` and existing Git history.
+
 ## [1.0.6] - 2026-03-26
 
 ### Fixed
