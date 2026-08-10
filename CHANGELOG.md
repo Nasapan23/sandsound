@@ -6,6 +6,12 @@ The format is based on Keep a Changelog, and this project uses semantic versioni
 
 ## [Unreleased]
 
+## [2.0.2] - 2026-08-10
+
+### Added
+- Portable releases now check for updates automatically every time SandSound opens.
+- Available updates can download, replace the application files after exit, and restart SandSound without touching Data or Downloads.
+
 ## [2.0.1] - 2026-08-10
 
 ### Added

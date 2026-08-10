@@ -20,6 +20,8 @@ public sealed partial class MainWindow : Window
     private MediaItem? _preview;
     private string _previewSourceUrl = string.Empty;
     private bool _searchMode;
+    private bool _checkingForUpdates;
+    private bool _installingUpdate;
     private CancellationTokenSource? _discoveryCancellation;
 
     public MainWindow()
@@ -61,6 +63,7 @@ public sealed partial class MainWindow : Window
             : "Development mode — yt-dlp will be resolved from PATH. Run the portable publish script before copying to USB.";
 
         Navigation.SelectedItem = Navigation.MenuItems[0];
+        _ = CheckForUpdatesAsync(userInitiated: false);
     }
 
     private void ConfigureWindow()
@@ -349,7 +352,7 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async void CheckUpdates_Click(object sender, RoutedEventArgs e)
+    private async void LegacyCheckUpdates_Click(object sender, RoutedEventArgs e)
     {
         try
         {
@@ -376,6 +379,80 @@ public sealed partial class MainWindow : Window
         catch (Exception ex)
         {
             ShowMessage($"Update check failed: {ex.Message}", InfoBarSeverity.Error);
+        }
+    }
+
+    private async void CheckUpdates_Click(object sender, RoutedEventArgs e) => await CheckForUpdatesAsync(userInitiated: true);
+
+    private async Task CheckForUpdatesAsync(bool userInitiated)
+    {
+        if (_checkingForUpdates || _installingUpdate) return;
+        _checkingForUpdates = true;
+        try
+        {
+            if (userInitiated) ShowMessage("Checking GitHub for updates...", InfoBarSeverity.Informational);
+            var update = await new UpdateService().CheckAsync();
+            if (update is null)
+            {
+                if (userInitiated) ShowMessage("SandSound is up to date.", InfoBarSeverity.Success);
+                return;
+            }
+
+            await ShowUpdateDialogAsync(update);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write("Update check failed", ex);
+            if (userInitiated) ShowMessage($"Update check failed: {ex.Message}", InfoBarSeverity.Error);
+        }
+        finally
+        {
+            _checkingForUpdates = false;
+        }
+    }
+
+    private async Task ShowUpdateDialogAsync(UpdateInfo update)
+    {
+        var updater = new UpdateService();
+        var canInstall = updater.CanApplyUpdate() && !string.IsNullOrWhiteSpace(update.DownloadUrl);
+        var dialog = new ContentDialog
+        {
+            XamlRoot = RootGrid.XamlRoot,
+            Title = $"SandSound {update.Tag} is available",
+            Content = canInstall
+                ? "Download and install it now? SandSound will restart automatically. Your Data and Downloads folders will be kept."
+                : "This release is available, but this installation cannot be updated automatically.",
+            PrimaryButtonText = canInstall ? "Update now" : "Open release",
+            CloseButtonText = "Later",
+            DefaultButton = ContentDialogButton.Primary
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+
+        if (!canInstall)
+        {
+            Process.Start(new ProcessStartInfo(update.PageUrl) { UseShellExecute = true });
+            return;
+        }
+
+        if (_queue?.Items.Any(item => item.CanCancel) == true)
+        {
+            ShowMessage("Finish or cancel active downloads before installing an update.", InfoBarSeverity.Warning);
+            return;
+        }
+
+        _installingUpdate = true;
+        try
+        {
+            ShowMessage("Downloading update...", InfoBarSeverity.Informational);
+            await updater.DownloadAndApplyAsync(update);
+            ShowMessage("Update downloaded. Restarting SandSound...", InfoBarSeverity.Success);
+            Close();
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write("Update installation failed", ex);
+            ShowMessage($"Update installation failed: {ex.Message}", InfoBarSeverity.Error);
+            _installingUpdate = false;
         }
     }
 
