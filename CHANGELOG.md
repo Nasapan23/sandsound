@@ -7,14 +7,11 @@ The format is based on Keep a Changelog, and this project uses semantic versioni
 ## [Unreleased]
 
 ### Added
-- Added a Search mode for live use: search YouTube from the app, review the top 4 video results, and download the selected result through the existing format/progress flow.
-- Search results now show thumbnails and wrap result text to avoid cropped titles or metadata.
-- Added a per-user Windows installer release package with bundled FFmpeg and Start Menu/Desktop shortcuts.
-- Added installer-based in-app updates that download and launch the GitHub release setup package.
+- Native Windows CI now restores the SDK pinned in `global.json`, publishes the complete portable folder, and verifies its executable and bundled media tools.
+- GitHub Actions uploads a portable ZIP for every build and creates a GitHub Release ZIP automatically for version tags.
 
 ### Changed
-- GitHub Releases now publish `SandSound-Setup-{version}.exe` as the primary Windows download.
-- Windows builds prefer bundled FFmpeg before configured paths or system PATH.
+- The download screen now has a more spacious, modern dashboard layout with clearer actions and improved visual hierarchy.
 
 ### Fixed
 - Playlist detection now handles YouTube and Music YouTube `watch?...&list=...` URLs.
