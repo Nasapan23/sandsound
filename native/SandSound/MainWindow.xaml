@@ -32,7 +32,6 @@
 
         <NavigationView x:Name="Navigation" Grid.Row="1" IsBackButtonVisible="Collapsed"
                         IsSettingsVisible="False" PaneDisplayMode="LeftCompact"
-                        PaneBackground="{StaticResource PageBrush}"
                         SelectionChanged="Navigation_SelectionChanged">
             <NavigationView.MenuItems>
                 <NavigationViewItem Content="Download" Tag="home">
