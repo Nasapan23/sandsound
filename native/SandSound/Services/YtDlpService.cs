@@ -21,9 +21,10 @@ public sealed class YtDlpService
 
     public bool HasPortableTool => File.Exists(Path.Combine(AppPaths.ToolsDirectory, "yt-dlp.exe"));
 
-    public async Task<MediaItem> InspectAsync(string url, CancellationToken cancellationToken = default)
+    public async Task<MediaItem> InspectAsync(string url, bool forceRefresh = false, CancellationToken cancellationToken = default)
     {
         var args = CommonArguments();
+        if (forceRefresh) args.Add("--no-cache-dir");
         args.AddRange(["--dump-single-json", "--flat-playlist", url]);
         var result = await ProcessRunner.RunAsync(Executable, args, cancellationToken: cancellationToken);
         EnsureSuccess(result);

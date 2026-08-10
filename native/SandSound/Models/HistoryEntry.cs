@@ -8,6 +8,8 @@ public sealed class HistoryEntry
     public string Url { get; set; } = string.Empty;
     public string Format { get; set; } = string.Empty;
     public string OutputDirectory { get; set; } = string.Empty;
+    public string PlaylistId { get; set; } = string.Empty;
+    public string PlaylistUrl { get; set; } = string.Empty;
     public string PlaylistTitle { get; set; } = string.Empty;
     public DateTimeOffset DownloadedAt { get; set; } = DateTimeOffset.Now;
     public string DateText => DownloadedAt.LocalDateTime.ToString("g");

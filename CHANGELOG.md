@@ -6,6 +6,16 @@ The format is based on Keep a Changelog, and this project uses semantic versioni
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-08-10
+
+### Added
+- Playlist history now keeps the playlist URL and downloaded track IDs so playlists can be reopened later.
+- Playlist history and playlist previews now provide a resync action that fetches the current playlist contents.
+
+### Fixed
+- In-app notifications render above the active page instead of behind its controls.
+- Resync bypasses yt-dlp's local cache and reports tracks not already in the library.
+
 ### Added
 - Native Windows CI now restores the SDK pinned in `global.json`, publishes the complete portable folder, and verifies its executable and bundled media tools.
 - GitHub Actions uploads a portable ZIP for every build and creates a GitHub Release ZIP automatically for version tags.

@@ -18,6 +18,7 @@ public sealed partial class MainWindow : Window
     private YtDlpService? _ytDlp;
     private DownloadQueueService? _queue;
     private MediaItem? _preview;
+    private string _previewSourceUrl = string.Empty;
     private bool _searchMode;
     private CancellationTokenSource? _discoveryCancellation;
 
@@ -46,6 +47,7 @@ public sealed partial class MainWindow : Window
 
         DownloadsList.ItemsSource = _queue.Items;
         HistoryList.ItemsSource = _history.Items;
+        PlaylistHistoryList.ItemsSource = _history.Playlists;
         DownloadDirectoryBox.Text = _settings.Current.DownloadDirectory;
         CookieFileBox.Text = _settings.Current.CookieFile;
         PlaylistFoldersCheck.IsChecked = _settings.Current.CreatePlaylistFolders;
@@ -138,7 +140,8 @@ public sealed partial class MainWindow : Window
             {
                 if (!Uri.TryCreate(input, UriKind.Absolute, out _))
                     throw new InvalidOperationException("Enter a complete YouTube URL, including https://.");
-                _preview = await _ytDlp.InspectAsync(input, _discoveryCancellation.Token);
+                _preview = await _ytDlp.InspectAsync(input, cancellationToken: _discoveryCancellation.Token);
+                _previewSourceUrl = input;
                 ShowPreview(_preview);
             }
         }
@@ -163,6 +166,9 @@ public sealed partial class MainWindow : Window
             : media.Subtitle;
         PlaylistList.Visibility = isPlaylist ? Visibility.Visible : Visibility.Collapsed;
         PlaylistList.ItemsSource = isPlaylist ? media.Entries : null;
+        ResyncPlaylistButton.Visibility = isPlaylist && !string.IsNullOrWhiteSpace(_previewSourceUrl)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
         PreviewCard.Visibility = Visibility.Visible;
         SearchResultsSection.Visibility = Visibility.Collapsed;
         if (isPlaylist) PlaylistList.SelectAll();
@@ -184,12 +190,22 @@ public sealed partial class MainWindow : Window
                 ShowMessage("Select at least one playlist item.", InfoBarSeverity.Warning);
                 return;
             }
-            Enqueue(selected, _preview.Title, skipDownloaded: true);
+            Enqueue(
+                selected,
+                playlistId: GetPlaylistId(_preview, _previewSourceUrl),
+                playlistUrl: _previewSourceUrl,
+                playlistTitle: _preview.Title,
+                skipDownloaded: true);
         }
         else Enqueue([_preview]);
     }
 
-    private void Enqueue(IReadOnlyList<MediaItem> media, string playlistTitle = "", bool skipDownloaded = false)
+    private void Enqueue(
+        IReadOnlyList<MediaItem> media,
+        string playlistId = "",
+        string playlistUrl = "",
+        string playlistTitle = "",
+        bool skipDownloaded = false)
     {
         if (_queue is null || media.Count == 0) return;
         var queuedMedia = skipDownloaded
@@ -204,7 +220,7 @@ public sealed partial class MainWindow : Window
         var format = FormatBox.SelectedItem?.ToString() ?? "mp3";
         _settings.Current.DefaultFormat = format;
         _settings.Current.DefaultQuality = QualityBox.SelectedItem?.ToString() ?? "Best";
-        _queue.Enqueue(queuedMedia, format, playlistTitle);
+        _queue.Enqueue(queuedMedia, format, playlistId, playlistUrl, playlistTitle);
         var message = queuedMedia.Count == 1 ? "Added to the download queue." : $"Added {queuedMedia.Count} items to the queue.";
         if (skipped > 0) message += $" Skipped {skipped} already downloaded.";
         ShowMessage(message, InfoBarSeverity.Success);
@@ -219,6 +235,63 @@ public sealed partial class MainWindow : Window
     private void CancelAll_Click(object sender, RoutedEventArgs e) => _queue?.CancelAll();
 
     private void OpenDownloads_Click(object sender, RoutedEventArgs e) => OpenFolder(_settings.Current.DownloadDirectory);
+
+    private async void ResyncPlaylist_Click(object sender, RoutedEventArgs e)
+    {
+        if (_preview is null || string.IsNullOrWhiteSpace(_previewSourceUrl)) return;
+        await InspectPlaylistAsync(_previewSourceUrl, true);
+    }
+
+    private async void OpenPlaylistHistory_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { CommandParameter: PlaylistHistoryEntry playlist })
+            await InspectPlaylistAsync(playlist.PlaylistUrl, false);
+    }
+
+    private async void ResyncPlaylistHistory_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { CommandParameter: PlaylistHistoryEntry playlist })
+            await InspectPlaylistAsync(playlist.PlaylistUrl, true);
+    }
+
+    private async Task InspectPlaylistAsync(string playlistUrl, bool forceRefresh)
+    {
+        if (_ytDlp is null || string.IsNullOrWhiteSpace(playlistUrl)) return;
+
+        _discoveryCancellation?.Cancel();
+        _discoveryCancellation = new CancellationTokenSource();
+        SetDiscoveryBusy(true);
+        try
+        {
+            _searchMode = false;
+            UrlModeButton.IsChecked = true;
+            SearchModeButton.IsChecked = false;
+            SourceBox.Text = playlistUrl;
+            SourceBox.PlaceholderText = "Paste a YouTube video or playlist URL";
+            InspectButton.Content = "Inspect";
+            _preview = await _ytDlp.InspectAsync(playlistUrl, forceRefresh, _discoveryCancellation.Token);
+            _previewSourceUrl = playlistUrl;
+            ShowPreview(_preview);
+            Navigation.SelectedItem = Navigation.MenuItems[0];
+
+            var currentCount = _preview.Entries?.Count ?? 0;
+            var newCount = _preview.Entries?.Count(item => !_history.ContainsMedia(item.Id)) ?? 0;
+            ShowMessage(forceRefresh
+                ? $"Playlist resynced: {currentCount} current tracks, {newCount} not yet downloaded."
+                : $"Playlist opened: {currentCount} current tracks, {newCount} not yet downloaded.",
+                InfoBarSeverity.Success);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            AppLog.Write("Playlist sync failed", ex);
+            ShowMessage($"Could not resync playlist: {ex.Message}", InfoBarSeverity.Error);
+        }
+        finally
+        {
+            SetDiscoveryBusy(false);
+        }
+    }
 
     private async void ClearHistory_Click(object sender, RoutedEventArgs e)
     {
@@ -320,6 +393,7 @@ public sealed partial class MainWindow : Window
     {
         InspectButton.IsEnabled = !busy;
         SourceBox.IsEnabled = !busy;
+        ResyncPlaylistButton.IsEnabled = !busy;
         DiscoveryProgress.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
     }
 
@@ -328,6 +402,21 @@ public sealed partial class MainWindow : Window
         MessageBar.Message = message;
         MessageBar.Severity = severity;
         MessageBar.IsOpen = true;
+    }
+
+    private static string GetPlaylistId(MediaItem playlist, string playlistUrl)
+    {
+        if (Uri.TryCreate(playlistUrl, UriKind.Absolute, out var uri))
+        {
+            var listId = uri.Query.TrimStart('?')
+                .Split('&', StringSplitOptions.RemoveEmptyEntries)
+                .Select(part => part.Split('=', 2))
+                .FirstOrDefault(pair => pair.Length == 2 && string.Equals(pair[0], "list", StringComparison.OrdinalIgnoreCase));
+            if (listId is { Length: 2 } && !string.IsNullOrWhiteSpace(listId[1]))
+                return Uri.UnescapeDataString(listId[1]);
+        }
+
+        return playlist.Id;
     }
 
     private static void OpenFolder(string path)

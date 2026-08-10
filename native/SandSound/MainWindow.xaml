@@ -49,9 +49,6 @@
             </NavigationView.MenuItems>
 
             <Grid>
-                <InfoBar x:Name="MessageBar" VerticalAlignment="Top" Margin="24,16,24,0"
-                         IsOpen="False" IsClosable="True" />
-
                 <ScrollViewer x:Name="HomePage" Padding="48,42,48,52">
                     <StackPanel MaxWidth="1120" HorizontalAlignment="Stretch" Spacing="28">
                         <Grid ColumnSpacing="32">
@@ -179,6 +176,8 @@
                                     <Button Grid.Column="2" x:Name="QueueButton" Content="Add to queue" Style="{StaticResource AccentButtonStyle}"
                                             VerticalAlignment="Bottom" Click="QueueButton_Click" />
                                 </Grid>
+                                <Button x:Name="ResyncPlaylistButton" Content="Resync playlist" HorizontalAlignment="Left"
+                                        Visibility="Collapsed" Click="ResyncPlaylist_Click" />
                             </StackPanel>
                         </Border>
                     </StackPanel>
@@ -219,8 +218,8 @@
                     </ListView>
                 </Grid>
 
-                <Grid x:Name="LibraryPage" Visibility="Collapsed" Padding="34,28,34,36">
-                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                <Grid x:Name="LibraryPage" Visibility="Collapsed" Padding="34,28,34,36" RowSpacing="16">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="240" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
                     <Grid>
                         <StackPanel Spacing="4">
                             <TextBlock Text="Library" Style="{StaticResource TitleLargeTextBlockStyle}" />
@@ -228,7 +227,32 @@
                         </StackPanel>
                         <Button Content="Clear history" Click="ClearHistory_Click" HorizontalAlignment="Right" VerticalAlignment="Center" />
                     </Grid>
-                    <ListView x:Name="HistoryList" Grid.Row="1" Margin="0,22,0,0">
+                    <StackPanel Grid.Row="1" Spacing="8">
+                        <Grid>
+                            <TextBlock Text="Playlist history" Style="{StaticResource SubtitleTextBlockStyle}" />
+                            <TextBlock Text="Reopen a playlist to fetch its current tracks." HorizontalAlignment="Right" Opacity="0.58" VerticalAlignment="Center" />
+                        </Grid>
+                        <ListView x:Name="PlaylistHistoryList">
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="{StaticResource CardBrush}" BorderBrush="{StaticResource CardStrokeBrush}"
+                                            BorderThickness="1" CornerRadius="12" Padding="14" Margin="0,0,0,6">
+                                        <Grid ColumnSpacing="14">
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                            <StackPanel Spacing="4">
+                                                <TextBlock Text="{Binding Title}" Style="{StaticResource BodyStrongTextBlockStyle}" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Text="{Binding Subtitle}" FontSize="12" Opacity="0.58" />
+                                            </StackPanel>
+                                            <Button Grid.Column="1" Content="Open" CommandParameter="{Binding}" Click="OpenPlaylistHistory_Click" VerticalAlignment="Center" />
+                                            <Button Grid.Column="2" Content="Resync" CommandParameter="{Binding}" Click="ResyncPlaylistHistory_Click" VerticalAlignment="Center" />
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                    </StackPanel>
+                    <TextBlock Grid.Row="2" Text="Download history" Style="{StaticResource SubtitleTextBlockStyle}" />
+                    <ListView x:Name="HistoryList" Grid.Row="3">
                         <ListView.ItemTemplate>
                             <DataTemplate>
                                 <Border Background="{StaticResource CardBrush}" BorderBrush="{StaticResource CardStrokeBrush}"
@@ -285,6 +309,8 @@
                         <Button Content="Save settings" Style="{StaticResource AccentButtonStyle}" Click="SaveSettings_Click" HorizontalAlignment="Left" />
                     </StackPanel>
                 </ScrollViewer>
+                <InfoBar x:Name="MessageBar" VerticalAlignment="Top" HorizontalAlignment="Stretch" Margin="24,16,24,0"
+                         IsOpen="False" IsClosable="True" Canvas.ZIndex="100" />
             </Grid>
         </NavigationView>
     </Grid>

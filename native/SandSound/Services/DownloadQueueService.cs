@@ -29,7 +29,12 @@ public sealed class DownloadQueueService
 
     public void Reconfigure() => _slots = new SemaphoreSlim(_settings.Current.ConcurrentDownloads);
 
-    public void Enqueue(IEnumerable<MediaItem> media, string format, string playlistTitle = "")
+    public void Enqueue(
+        IEnumerable<MediaItem> media,
+        string format,
+        string playlistId = "",
+        string playlistUrl = "",
+        string playlistTitle = "")
     {
         foreach (var source in media)
         {
@@ -39,6 +44,8 @@ public sealed class DownloadQueueService
                 Url = source.EffectiveUrl,
                 Title = source.Title,
                 Format = format,
+                PlaylistId = playlistId,
+                PlaylistUrl = playlistUrl,
                 PlaylistTitle = playlistTitle
             };
             Items.Insert(0, item);
@@ -74,6 +81,8 @@ public sealed class DownloadQueueService
                 Title = item.Title,
                 Url = item.Url,
                 Format = item.Format,
+                PlaylistId = item.PlaylistId,
+                PlaylistUrl = item.PlaylistUrl,
                 PlaylistTitle = item.PlaylistTitle,
                 OutputDirectory = _settings.Current.DownloadDirectory
             });

@@ -7,7 +7,7 @@ public sealed record UpdateInfo(Version Version, string Tag, string PageUrl, str
 
 public sealed class UpdateService
 {
-    public static readonly Version CurrentVersion = new(2, 0, 0);
+    public static readonly Version CurrentVersion = new(2, 0, 1);
     private const string LatestReleaseApi = "https://api.github.com/repos/Nasapan23/sandsound/releases/latest";
 
     public async Task<UpdateInfo?> CheckAsync(CancellationToken cancellationToken = default)
