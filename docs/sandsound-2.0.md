@@ -1,6 +1,6 @@
 # SandSound 2.0 implementation
 
-SandSound 2.0 is a full replacement for the original Python and CustomTkinter application. The product is now a native Windows desktop application written in C# on .NET 10 with WinUI 3.
+SandSound 2.0 is a full replacement for the original Python and CustomTkinter application. The product is written in C# on .NET 10, with a WinUI 3 shell on Windows and a parallel Avalonia shell on macOS.
 
 ## Why it was rebuilt
 
@@ -14,19 +14,21 @@ The implementation is deliberately small and organized around the responsibiliti
 
 | Area | Responsibility |
 | --- | --- |
-| `MainWindow` | WinUI 3 application shell, navigation, user input, and view state. |
+| `native/SandSound/MainWindow` | WinUI 3 application shell, navigation, user input, and view state. |
+| `native/SandSound.Mac/MainWindow` | Equivalent macOS application shell built with Avalonia. |
 | `Models` | Download, history, media-preview, and settings data. |
 | `Services/YtDlpService` | URL inspection, YouTube search, and yt-dlp command construction. |
 | `Services/DownloadQueueService` | Concurrent queue execution, progress, cancellation, and completed-download handling. |
 | `Services/SettingsService` and `HistoryService` | Portable JSON-backed settings and download history. |
-| `Services/AppPaths` and `AppLog` | Paths relative to the executable and portable diagnostic logging. |
-| `scripts/publish-portable.ps1` | Self-contained .NET publish plus yt-dlp and FFmpeg packaging. |
+| `Services/AppPaths` and `AppLog` | Paths relative to the portable release root and portable diagnostic logging. |
+| `scripts/publish-portable.ps1` | Self-contained Windows publish plus yt-dlp and FFmpeg packaging. |
+| `scripts/publish-portable-macos.sh` | Self-contained macOS app bundle plus architecture-specific tools. |
 
-There is no server component and no profile or registry storage requirement. User-facing data stays beside the executable.
+There is no server component and no profile or registry storage requirement. User-facing data stays beside the application in the portable release folder.
 
 ## Fully portable release
 
-The release is an unpackaged, self-contained Windows x64 folder. It can be copied to a USB drive or another Windows folder and run by launching `SandSound.exe`.
+Releases are self-contained folders. They can be copied to a USB drive or another folder and launched without installing .NET, yt-dlp, or FFmpeg.
 
 ```text
 SandSound-win-x64/
@@ -37,9 +39,18 @@ SandSound-win-x64/
 │   └── ffprobe.exe
 ├── Data/
 └── Downloads/
+
+SandSound-macos-arm64/ (or macos-x64)
+├── SandSound.app/
+│   └── Contents/MacOS/Tools/
+│       ├── yt-dlp
+│       ├── ffmpeg
+│       └── ffprobe
+├── Data/
+└── Downloads/
 ```
 
-`Data` contains settings, download history, and logs. `Downloads` is the default media destination. Both folders are created next to the executable, so moving the full release folder moves the application and its local data together.
+`Data` contains settings, download history, and logs. `Downloads` is the default media destination. Both folders are created in the release root, so moving the full release folder moves the application and its local data together.
 
 ## Build and release
 
@@ -49,8 +60,8 @@ The project pins the .NET SDK in `global.json`. A local portable release is buil
 .\scripts\publish-portable.ps1
 ```
 
-GitHub Actions uses the same publishing script on Windows. Each pull request and branch build produces a downloadable portable ZIP artifact. Pushing a version tag such as `v2.0.1` also creates a GitHub Release containing that ZIP.
+GitHub Actions runs the Windows publisher and parallel Apple Silicon/Intel macOS publishers. Each pull request and branch build produces downloadable portable ZIP artifacts. Pushing a version tag such as `v2.0.3` creates a GitHub Release containing all three archives.
 
 ## Migration from 1.x
 
-The legacy Python code, PyInstaller configuration, installer, screenshots, and Python test suite were removed from the 2.0 rewrite branch. They remain available in the repository history and the `main` branch until the rewrite is merged. The 2.0 branch is the authoritative source for the native application and portable release pipeline.
+The legacy Python code, PyInstaller configuration, installer, screenshots, and Python test suite were removed from the 2.0 rewrite. They remain available in the repository history; the current branch is authoritative for the native applications and portable release pipelines.

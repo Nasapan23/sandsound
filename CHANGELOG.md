@@ -6,6 +6,14 @@ The format is based on Keep a Changelog, and this project uses semantic versioni
 
 ## [Unreleased]
 
+### Added
+- Parallel Avalonia desktop application for macOS 13 through macOS 27 with feature parity for discovery, playlists, queueing, history, settings, and update checks.
+- Self-contained Apple Silicon and Intel portable `.app` builds with bundled universal yt-dlp and architecture-matched FFmpeg tools.
+- GitHub Actions now builds and publishes Windows x64, macOS arm64, and macOS x64 archives together.
+
+### Changed
+- Shared portable paths and media-tool discovery now select the correct executable names and bundle locations for Windows and macOS.
+
 ## [2.0.2] - 2026-08-10
 
 ### Added

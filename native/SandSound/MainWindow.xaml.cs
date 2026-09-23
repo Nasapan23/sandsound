@@ -59,7 +59,7 @@ public sealed partial class MainWindow : Window
         QualityBox.SelectedItem = _settings.Current.DefaultQuality;
         PortablePathText.Text = AppPaths.ExecutableDirectory;
         RuntimeStatusText.Text = _ytDlp.HasPortableTool
-            ? "Ready — yt-dlp is bundled. FFmpeg is " + (File.Exists(Path.Combine(AppPaths.ToolsDirectory, "ffmpeg.exe")) ? "bundled." : "missing.")
+            ? "Ready — yt-dlp is bundled. FFmpeg is " + (_ytDlp.HasPortableFfmpeg ? "bundled." : "missing.")
             : "Development mode — yt-dlp will be resolved from PATH. Run the portable publish script before copying to USB.";
 
         Navigation.SelectedItem = Navigation.MenuItems[0];

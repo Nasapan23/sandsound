@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net.Http.Headers;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 
 namespace SandSound.Services;
@@ -16,7 +17,9 @@ public sealed class UpdateService
 {
     public static readonly Version CurrentVersion = new(2, 0, 2);
     private const string LatestReleaseApi = "https://api.github.com/repos/Nasapan23/sandsound/releases/latest";
-    private const string PortableAssetName = "SandSound-win-x64.zip";
+    private static string PortableAssetName => OperatingSystem.IsMacOS()
+        ? $"SandSound-macos-{(RuntimeInformation.ProcessArchitecture == Architecture.Arm64 ? "arm64" : "x64")}.zip"
+        : "SandSound-win-x64.zip";
 
     public async Task<UpdateInfo?> CheckAsync(CancellationToken cancellationToken = default)
     {
