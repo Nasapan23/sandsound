@@ -18,7 +18,10 @@ public sealed partial class MainWindow : Window
     private YtDlpService? _ytDlp;
     private DownloadQueueService? _queue;
     private MediaItem? _preview;
+    private string _previewSourceUrl = string.Empty;
     private bool _searchMode;
+    private bool _checkingForUpdates;
+    private bool _installingUpdate;
     private CancellationTokenSource? _discoveryCancellation;
 
     public MainWindow()
@@ -46,6 +49,7 @@ public sealed partial class MainWindow : Window
 
         DownloadsList.ItemsSource = _queue.Items;
         HistoryList.ItemsSource = _history.Items;
+        PlaylistHistoryList.ItemsSource = _history.Playlists;
         DownloadDirectoryBox.Text = _settings.Current.DownloadDirectory;
         CookieFileBox.Text = _settings.Current.CookieFile;
         PlaylistFoldersCheck.IsChecked = _settings.Current.CreatePlaylistFolders;
@@ -55,10 +59,11 @@ public sealed partial class MainWindow : Window
         QualityBox.SelectedItem = _settings.Current.DefaultQuality;
         PortablePathText.Text = AppPaths.ExecutableDirectory;
         RuntimeStatusText.Text = _ytDlp.HasPortableTool
-            ? "Ready — yt-dlp is bundled. FFmpeg is " + (File.Exists(Path.Combine(AppPaths.ToolsDirectory, "ffmpeg.exe")) ? "bundled." : "missing.")
+            ? "Ready — yt-dlp is bundled. FFmpeg is " + (_ytDlp.HasPortableFfmpeg ? "bundled." : "missing.")
             : "Development mode — yt-dlp will be resolved from PATH. Run the portable publish script before copying to USB.";
 
         Navigation.SelectedItem = Navigation.MenuItems[0];
+        _ = CheckForUpdatesAsync(userInitiated: false);
     }
 
     private void ConfigureWindow()
@@ -138,7 +143,8 @@ public sealed partial class MainWindow : Window
             {
                 if (!Uri.TryCreate(input, UriKind.Absolute, out _))
                     throw new InvalidOperationException("Enter a complete YouTube URL, including https://.");
-                _preview = await _ytDlp.InspectAsync(input, _discoveryCancellation.Token);
+                _preview = await _ytDlp.InspectAsync(input, cancellationToken: _discoveryCancellation.Token);
+                _previewSourceUrl = input;
                 ShowPreview(_preview);
             }
         }
@@ -163,6 +169,9 @@ public sealed partial class MainWindow : Window
             : media.Subtitle;
         PlaylistList.Visibility = isPlaylist ? Visibility.Visible : Visibility.Collapsed;
         PlaylistList.ItemsSource = isPlaylist ? media.Entries : null;
+        ResyncPlaylistButton.Visibility = isPlaylist && !string.IsNullOrWhiteSpace(_previewSourceUrl)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
         PreviewCard.Visibility = Visibility.Visible;
         SearchResultsSection.Visibility = Visibility.Collapsed;
         if (isPlaylist) PlaylistList.SelectAll();
@@ -184,12 +193,22 @@ public sealed partial class MainWindow : Window
                 ShowMessage("Select at least one playlist item.", InfoBarSeverity.Warning);
                 return;
             }
-            Enqueue(selected, _preview.Title, skipDownloaded: true);
+            Enqueue(
+                selected,
+                playlistId: GetPlaylistId(_preview, _previewSourceUrl),
+                playlistUrl: _previewSourceUrl,
+                playlistTitle: _preview.Title,
+                skipDownloaded: true);
         }
         else Enqueue([_preview]);
     }
 
-    private void Enqueue(IReadOnlyList<MediaItem> media, string playlistTitle = "", bool skipDownloaded = false)
+    private void Enqueue(
+        IReadOnlyList<MediaItem> media,
+        string playlistId = "",
+        string playlistUrl = "",
+        string playlistTitle = "",
+        bool skipDownloaded = false)
     {
         if (_queue is null || media.Count == 0) return;
         var queuedMedia = skipDownloaded
@@ -204,7 +223,7 @@ public sealed partial class MainWindow : Window
         var format = FormatBox.SelectedItem?.ToString() ?? "mp3";
         _settings.Current.DefaultFormat = format;
         _settings.Current.DefaultQuality = QualityBox.SelectedItem?.ToString() ?? "Best";
-        _queue.Enqueue(queuedMedia, format, playlistTitle);
+        _queue.Enqueue(queuedMedia, format, playlistId, playlistUrl, playlistTitle);
         var message = queuedMedia.Count == 1 ? "Added to the download queue." : $"Added {queuedMedia.Count} items to the queue.";
         if (skipped > 0) message += $" Skipped {skipped} already downloaded.";
         ShowMessage(message, InfoBarSeverity.Success);
@@ -219,6 +238,63 @@ public sealed partial class MainWindow : Window
     private void CancelAll_Click(object sender, RoutedEventArgs e) => _queue?.CancelAll();
 
     private void OpenDownloads_Click(object sender, RoutedEventArgs e) => OpenFolder(_settings.Current.DownloadDirectory);
+
+    private async void ResyncPlaylist_Click(object sender, RoutedEventArgs e)
+    {
+        if (_preview is null || string.IsNullOrWhiteSpace(_previewSourceUrl)) return;
+        await InspectPlaylistAsync(_previewSourceUrl, true);
+    }
+
+    private async void OpenPlaylistHistory_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { CommandParameter: PlaylistHistoryEntry playlist })
+            await InspectPlaylistAsync(playlist.PlaylistUrl, false);
+    }
+
+    private async void ResyncPlaylistHistory_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { CommandParameter: PlaylistHistoryEntry playlist })
+            await InspectPlaylistAsync(playlist.PlaylistUrl, true);
+    }
+
+    private async Task InspectPlaylistAsync(string playlistUrl, bool forceRefresh)
+    {
+        if (_ytDlp is null || string.IsNullOrWhiteSpace(playlistUrl)) return;
+
+        _discoveryCancellation?.Cancel();
+        _discoveryCancellation = new CancellationTokenSource();
+        SetDiscoveryBusy(true);
+        try
+        {
+            _searchMode = false;
+            UrlModeButton.IsChecked = true;
+            SearchModeButton.IsChecked = false;
+            SourceBox.Text = playlistUrl;
+            SourceBox.PlaceholderText = "Paste a YouTube video or playlist URL";
+            InspectButton.Content = "Inspect";
+            _preview = await _ytDlp.InspectAsync(playlistUrl, forceRefresh, _discoveryCancellation.Token);
+            _previewSourceUrl = playlistUrl;
+            ShowPreview(_preview);
+            Navigation.SelectedItem = Navigation.MenuItems[0];
+
+            var currentCount = _preview.Entries?.Count ?? 0;
+            var newCount = _preview.Entries?.Count(item => !_history.ContainsMedia(item.Id)) ?? 0;
+            ShowMessage(forceRefresh
+                ? $"Playlist resynced: {currentCount} current tracks, {newCount} not yet downloaded."
+                : $"Playlist opened: {currentCount} current tracks, {newCount} not yet downloaded.",
+                InfoBarSeverity.Success);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            AppLog.Write("Playlist sync failed", ex);
+            ShowMessage($"Could not resync playlist: {ex.Message}", InfoBarSeverity.Error);
+        }
+        finally
+        {
+            SetDiscoveryBusy(false);
+        }
+    }
 
     private async void ClearHistory_Click(object sender, RoutedEventArgs e)
     {
@@ -276,7 +352,7 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async void CheckUpdates_Click(object sender, RoutedEventArgs e)
+    private async void LegacyCheckUpdates_Click(object sender, RoutedEventArgs e)
     {
         try
         {
@@ -306,6 +382,80 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private async void CheckUpdates_Click(object sender, RoutedEventArgs e) => await CheckForUpdatesAsync(userInitiated: true);
+
+    private async Task CheckForUpdatesAsync(bool userInitiated)
+    {
+        if (_checkingForUpdates || _installingUpdate) return;
+        _checkingForUpdates = true;
+        try
+        {
+            if (userInitiated) ShowMessage("Checking GitHub for updates...", InfoBarSeverity.Informational);
+            var update = await new UpdateService().CheckAsync();
+            if (update is null)
+            {
+                if (userInitiated) ShowMessage("SandSound is up to date.", InfoBarSeverity.Success);
+                return;
+            }
+
+            await ShowUpdateDialogAsync(update);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write("Update check failed", ex);
+            if (userInitiated) ShowMessage($"Update check failed: {ex.Message}", InfoBarSeverity.Error);
+        }
+        finally
+        {
+            _checkingForUpdates = false;
+        }
+    }
+
+    private async Task ShowUpdateDialogAsync(UpdateInfo update)
+    {
+        var updater = new UpdateService();
+        var canInstall = updater.CanApplyUpdate() && !string.IsNullOrWhiteSpace(update.DownloadUrl);
+        var dialog = new ContentDialog
+        {
+            XamlRoot = RootGrid.XamlRoot,
+            Title = $"SandSound {update.Tag} is available",
+            Content = canInstall
+                ? "Download and install it now? SandSound will restart automatically. Your Data and Downloads folders will be kept."
+                : "This release is available, but this installation cannot be updated automatically.",
+            PrimaryButtonText = canInstall ? "Update now" : "Open release",
+            CloseButtonText = "Later",
+            DefaultButton = ContentDialogButton.Primary
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+
+        if (!canInstall)
+        {
+            Process.Start(new ProcessStartInfo(update.PageUrl) { UseShellExecute = true });
+            return;
+        }
+
+        if (_queue?.Items.Any(item => item.CanCancel) == true)
+        {
+            ShowMessage("Finish or cancel active downloads before installing an update.", InfoBarSeverity.Warning);
+            return;
+        }
+
+        _installingUpdate = true;
+        try
+        {
+            ShowMessage("Downloading update...", InfoBarSeverity.Informational);
+            await updater.DownloadAndApplyAsync(update);
+            ShowMessage("Update downloaded. Restarting SandSound...", InfoBarSeverity.Success);
+            Close();
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write("Update installation failed", ex);
+            ShowMessage($"Update installation failed: {ex.Message}", InfoBarSeverity.Error);
+            _installingUpdate = false;
+        }
+    }
+
     private void ApplyTheme(string theme)
     {
         RootGrid.RequestedTheme = theme switch
@@ -320,6 +470,7 @@ public sealed partial class MainWindow : Window
     {
         InspectButton.IsEnabled = !busy;
         SourceBox.IsEnabled = !busy;
+        ResyncPlaylistButton.IsEnabled = !busy;
         DiscoveryProgress.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
     }
 
@@ -328,6 +479,21 @@ public sealed partial class MainWindow : Window
         MessageBar.Message = message;
         MessageBar.Severity = severity;
         MessageBar.IsOpen = true;
+    }
+
+    private static string GetPlaylistId(MediaItem playlist, string playlistUrl)
+    {
+        if (Uri.TryCreate(playlistUrl, UriKind.Absolute, out var uri))
+        {
+            var listId = uri.Query.TrimStart('?')
+                .Split('&', StringSplitOptions.RemoveEmptyEntries)
+                .Select(part => part.Split('=', 2))
+                .FirstOrDefault(pair => pair.Length == 2 && string.Equals(pair[0], "list", StringComparison.OrdinalIgnoreCase));
+            if (listId is { Length: 2 } && !string.IsNullOrWhiteSpace(listId[1]))
+                return Uri.UnescapeDataString(listId[1]);
+        }
+
+        return playlist.Id;
     }
 
     private static void OpenFolder(string path)

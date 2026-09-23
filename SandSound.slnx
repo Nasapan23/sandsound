@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="native/SandSound/SandSound.csproj" />
+  <Project Path="native/SandSound.Mac/SandSound.Mac.csproj" />
+</Solution>

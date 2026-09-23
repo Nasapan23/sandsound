@@ -15,15 +15,19 @@ public sealed class YtDlpService
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private readonly SettingsService _settings;
-    private string Executable => AppPaths.FindTool("yt-dlp.exe", "yt-dlp");
+    private static string YtDlpFileName => AppPaths.ToolFileName("yt-dlp");
+    private static string FfmpegFileName => AppPaths.ToolFileName("ffmpeg");
+    private string Executable => AppPaths.FindTool(YtDlpFileName, "yt-dlp");
 
     public YtDlpService(SettingsService settings) => _settings = settings;
 
-    public bool HasPortableTool => File.Exists(Path.Combine(AppPaths.ToolsDirectory, "yt-dlp.exe"));
+    public bool HasPortableTool => File.Exists(Path.Combine(AppPaths.ToolsDirectory, YtDlpFileName));
+    public bool HasPortableFfmpeg => File.Exists(Path.Combine(AppPaths.ToolsDirectory, FfmpegFileName));
 
-    public async Task<MediaItem> InspectAsync(string url, CancellationToken cancellationToken = default)
+    public async Task<MediaItem> InspectAsync(string url, bool forceRefresh = false, CancellationToken cancellationToken = default)
     {
         var args = CommonArguments();
+        if (forceRefresh) args.Add("--no-cache-dir");
         args.AddRange(["--dump-single-json", "--flat-playlist", url]);
         var result = await ProcessRunner.RunAsync(Executable, args, cancellationToken: cancellationToken);
         EnsureSuccess(result);
@@ -56,12 +60,12 @@ public sealed class YtDlpService
         args.AddRange([
             "--newline",
             "--no-color",
-            "--windows-filenames",
             "--no-playlist",
             "--progress-template", "download:SANDSOUND:%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s",
             "--output", Path.Combine(outputDirectory, "%(title)s [%(id)s].%(ext)s"),
             "--add-metadata"
         ]);
+        if (OperatingSystem.IsWindows()) args.Insert(2, "--windows-filenames");
 
         var format = item.Format.ToLowerInvariant();
         if (format is "mp3" or "m4a" or "opus" or "flac" or "wav")
@@ -116,7 +120,7 @@ public sealed class YtDlpService
         if (!string.IsNullOrWhiteSpace(cookieFile) && File.Exists(cookieFile))
             args.AddRange(["--cookies", cookieFile]);
 
-        var ffmpeg = Path.Combine(AppPaths.ToolsDirectory, "ffmpeg.exe");
+        var ffmpeg = Path.Combine(AppPaths.ToolsDirectory, FfmpegFileName);
         if (File.Exists(ffmpeg)) args.AddRange(["--ffmpeg-location", AppPaths.ToolsDirectory]);
         return args;
     }

@@ -23,6 +23,8 @@ public sealed class DownloadItem : INotifyPropertyChanged
     public required string Url { get; init; }
     public required string Title { get; init; }
     public required string Format { get; init; }
+    public string PlaylistId { get; init; } = string.Empty;
+    public string PlaylistUrl { get; init; } = string.Empty;
     public string PlaylistTitle { get; init; } = string.Empty;
     public CancellationTokenSource Cancellation { get; } = new();
 

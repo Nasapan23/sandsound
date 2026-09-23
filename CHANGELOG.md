@@ -7,6 +7,30 @@ The format is based on Keep a Changelog, and this project uses semantic versioni
 ## [Unreleased]
 
 ### Added
+- Parallel Avalonia desktop application for macOS 13 through macOS 27 with feature parity for discovery, playlists, queueing, history, settings, and update checks.
+- Self-contained Apple Silicon and Intel portable `.app` builds with bundled universal yt-dlp and architecture-matched FFmpeg tools.
+- GitHub Actions now builds and publishes Windows x64, macOS arm64, and macOS x64 archives together.
+
+### Changed
+- Shared portable paths and media-tool discovery now select the correct executable names and bundle locations for Windows and macOS.
+
+## [2.0.2] - 2026-08-10
+
+### Added
+- Portable releases now check for updates automatically every time SandSound opens.
+- Available updates can download, replace the application files after exit, and restart SandSound without touching Data or Downloads.
+
+## [2.0.1] - 2026-08-10
+
+### Added
+- Playlist history now keeps the playlist URL and downloaded track IDs so playlists can be reopened later.
+- Playlist history and playlist previews now provide a resync action that fetches the current playlist contents.
+
+### Fixed
+- In-app notifications render above the active page instead of behind its controls.
+- Resync bypasses yt-dlp's local cache and reports tracks not already in the library.
+
+### Added
 - Native Windows CI now restores the SDK pinned in `global.json`, publishes the complete portable folder, and verifies its executable and bundled media tools.
 - GitHub Actions uploads a portable ZIP for every build and creates a GitHub Release ZIP automatically for version tags.
 
