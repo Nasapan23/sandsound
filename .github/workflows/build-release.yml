@@ -104,10 +104,10 @@ jobs:
           done
           expected_arch="${{ matrix.architecture }}"
           if [[ "$expected_arch" == "x64" ]]; then expected_arch="x86_64"; fi
-          lipo -verify_arch "$expected_arch" "$release/SandSound.app/Contents/MacOS/SandSound"
-          lipo -verify_arch "$expected_arch" "$release/SandSound.app/Contents/MacOS/Tools/yt-dlp"
-          lipo -verify_arch "$expected_arch" "$release/SandSound.app/Contents/MacOS/Tools/ffmpeg"
-          lipo -verify_arch "$expected_arch" "$release/SandSound.app/Contents/MacOS/Tools/ffprobe"
+          lipo "$release/SandSound.app/Contents/MacOS/SandSound" -verify_arch "$expected_arch"
+          lipo "$release/SandSound.app/Contents/MacOS/Tools/yt-dlp" -verify_arch "$expected_arch"
+          lipo "$release/SandSound.app/Contents/MacOS/Tools/ffmpeg" -verify_arch "$expected_arch"
+          lipo "$release/SandSound.app/Contents/MacOS/Tools/ffprobe" -verify_arch "$expected_arch"
           codesign --verify --deep --strict "$release/SandSound.app"
 
       - name: Create release archive
