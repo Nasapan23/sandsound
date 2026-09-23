@@ -6,6 +6,8 @@ The format is based on Keep a Changelog, and this project uses semantic versioni
 
 ## [Unreleased]
 
+## [2.0.3] - 2026-09-23
+
 ### Added
 - Parallel Avalonia desktop application for macOS 13 through macOS 27 with feature parity for discovery, playlists, queueing, history, settings, and update checks.
 - Self-contained Apple Silicon and Intel portable `.app` builds with bundled universal yt-dlp and architecture-matched FFmpeg tools.

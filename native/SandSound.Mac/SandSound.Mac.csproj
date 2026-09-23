@@ -9,8 +9,8 @@
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
     <DebugType>embedded</DebugType>
-    <ApplicationVersion>2.0.2.0</ApplicationVersion>
-    <Version>2.0.2</Version>
+    <ApplicationVersion>2.0.3.0</ApplicationVersion>
+    <Version>2.0.3</Version>
     <RuntimeIdentifiers>osx-x64;osx-arm64</RuntimeIdentifiers>
     <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
   </PropertyGroup>

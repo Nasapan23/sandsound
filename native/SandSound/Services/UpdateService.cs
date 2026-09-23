@@ -15,7 +15,7 @@ public sealed record UpdateInfo(
 
 public sealed class UpdateService
 {
-    public static readonly Version CurrentVersion = new(2, 0, 2);
+    public static readonly Version CurrentVersion = new(2, 0, 3);
     private const string LatestReleaseApi = "https://api.github.com/repos/Nasapan23/sandsound/releases/latest";
     private static string PortableAssetName => OperatingSystem.IsMacOS()
         ? $"SandSound-macos-{(RuntimeInformation.ProcessArchitecture == Architecture.Arm64 ? "arm64" : "x64")}.zip"
